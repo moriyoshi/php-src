@@ -677,6 +677,8 @@ void zend_do_assign(znode *result, znode *variable, const znode *value TSRMLS_DC
 			}
 			n++;
 		}
+	} else {
+		zend_check_writable_variable(variable);
 	}
 
 	opline->opcode = ZEND_ASSIGN;
@@ -961,6 +963,9 @@ void zend_check_writable_variable(const znode *variable) /* {{{ */
 	}
 	if (type == ZEND_PARSED_FUNCTION_CALL) {
 		zend_error(E_COMPILE_ERROR, "Can't use function return value in write context");
+	}
+	if (variable->op_type == IS_CONST || variable->op_type == IS_TMP_VAR) {
+		zend_error(E_COMPILE_ERROR, "Can't use constant value in write context");
 	}
 }
 /* }}} */
@@ -2088,47 +2093,52 @@ void zend_do_pass_param(znode *param, zend_uchar op, int offset TSRMLS_DC) /* {{
 	zend_stack_top(&CG(function_call_stack), (void **) &function_ptr_ptr);
 	function_ptr = *function_ptr_ptr;
 
-	if (original_op == ZEND_SEND_REF && !CG(allow_call_time_pass_reference)) {
-		if (function_ptr &&
-		    function_ptr->common.function_name &&
-		    function_ptr->common.type == ZEND_USER_FUNCTION &&
-		    !ARG_SHOULD_BE_SENT_BY_REF(function_ptr, (zend_uint) offset)) {
-			zend_error(E_DEPRECATED,
-						"Call-time pass-by-reference has been deprecated; "
-						"If you would like to pass it by reference, modify the declaration of %s().  "
-						"If you would like to enable call-time pass-by-reference, you can set "
-						"allow_call_time_pass_reference to true in your INI file", function_ptr->common.function_name);
-		} else {
-			zend_error(E_DEPRECATED, "Call-time pass-by-reference has been deprecated");
+	if (param->op_type & (IS_CONST | IS_TMP_VAR)) {
+		op = ZEND_SEND_VAL;
+		send_by_reference = 0;
+	} else {
+		if (original_op == ZEND_SEND_REF && !CG(allow_call_time_pass_reference)) {
+			if (function_ptr &&
+				function_ptr->common.function_name &&
+				function_ptr->common.type == ZEND_USER_FUNCTION &&
+				!ARG_SHOULD_BE_SENT_BY_REF(function_ptr, (zend_uint) offset)) {
+				zend_error(E_DEPRECATED,
+							"Call-time pass-by-reference has been deprecated; "
+							"If you would like to pass it by reference, modify the declaration of %s().  "
+							"If you would like to enable call-time pass-by-reference, you can set "
+							"allow_call_time_pass_reference to true in your INI file", function_ptr->common.function_name);
+			} else {
+				zend_error(E_DEPRECATED, "Call-time pass-by-reference has been deprecated");
+			}
 		}
-	}
 
-	if (function_ptr) {
-		if (ARG_MAY_BE_SENT_BY_REF(function_ptr, (zend_uint) offset)) {
-			if (param->op_type & (IS_VAR|IS_CV)) {
-				send_by_reference = 1;
-				if (op == ZEND_SEND_VAR && zend_is_function_or_method_call(param)) {
-					/* Method call */
-					op = ZEND_SEND_VAR_NO_REF;
-					send_function = ZEND_ARG_SEND_FUNCTION | ZEND_ARG_SEND_SILENT;
+		if (function_ptr) {
+			if (ARG_MAY_BE_SENT_BY_REF(function_ptr, (zend_uint) offset)) {
+				if (param->op_type & (IS_VAR|IS_CV)) {
+					send_by_reference = 1;
+					if (op == ZEND_SEND_VAR && zend_is_function_or_method_call(param)) {
+						/* Method call */
+						op = ZEND_SEND_VAR_NO_REF;
+						send_function = ZEND_ARG_SEND_FUNCTION | ZEND_ARG_SEND_SILENT;
+					}
+				} else {
+					op = ZEND_SEND_VAL;
+					send_by_reference = 0;
 				}
 			} else {
-				op = ZEND_SEND_VAL;
-				send_by_reference = 0;
+				send_by_reference = ARG_SHOULD_BE_SENT_BY_REF(function_ptr, (zend_uint) offset) ? ZEND_ARG_SEND_BY_REF : 0;
 			}
 		} else {
-			send_by_reference = ARG_SHOULD_BE_SENT_BY_REF(function_ptr, (zend_uint) offset) ? ZEND_ARG_SEND_BY_REF : 0;
+			send_by_reference = 0;
 		}
-	} else {
-		send_by_reference = 0;
-	}
 
-	if (op == ZEND_SEND_VAR && zend_is_function_or_method_call(param)) {
-		/* Method call */
-		op = ZEND_SEND_VAR_NO_REF;
-		send_function = ZEND_ARG_SEND_FUNCTION;
-	} else if (op == ZEND_SEND_VAL && (param->op_type & (IS_VAR|IS_CV))) {
-		op = ZEND_SEND_VAR_NO_REF;
+		if (op == ZEND_SEND_VAR && zend_is_function_or_method_call(param)) {
+			/* Method call */
+			op = ZEND_SEND_VAR_NO_REF;
+			send_function = ZEND_ARG_SEND_FUNCTION;
+		} else if (op == ZEND_SEND_VAL && (param->op_type & (IS_VAR|IS_CV))) {
+			op = ZEND_SEND_VAR_NO_REF;
+		}
 	}
 
 	if (op!=ZEND_SEND_VAR_NO_REF && send_by_reference==ZEND_ARG_SEND_BY_REF) {
@@ -2146,6 +2156,7 @@ void zend_do_pass_param(znode *param, zend_uchar op, int offset TSRMLS_DC) /* {{
 
 	if (original_op == ZEND_SEND_VAR) {
 		switch (op) {
+			case ZEND_SEND_VAL:
 			case ZEND_SEND_VAR_NO_REF:
 				zend_do_end_variable_parse(param, BP_VAR_R, 0 TSRMLS_CC);
 				break;

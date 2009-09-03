@@ -1915,13 +1915,14 @@ ZEND_VM_HANDLER(109, ZEND_FETCH_CLASS, ANY, CONST|TMP|VAR|UNUSED|CV)
 	}
 }
 
-ZEND_VM_HANDLER(112, ZEND_INIT_METHOD_CALL, TMP|VAR|UNUSED|CV, CONST|TMP|VAR|CV)
+ZEND_VM_HANDLER(112, ZEND_INIT_METHOD_CALL, ANY, CONST|TMP|VAR|CV)
 {
 	zend_op *opline = EX(opline);
 	zval *function_name;
 	char *function_name_strval;
 	int function_name_strlen;
 	zend_free_op free_op1, free_op2;
+	zend_bool should_free_afterwards = 0;
 
 	zend_ptr_stack_3_push(&EG(arg_types_stack), EX(fbc), EX(object), EX(called_scope));
 
@@ -1936,33 +1937,59 @@ ZEND_VM_HANDLER(112, ZEND_INIT_METHOD_CALL, TMP|VAR|UNUSED|CV, CONST|TMP|VAR|CV)
 
 	EX(object) = GET_OP1_OBJ_ZVAL_PTR(BP_VAR_R);
 
-	if (EX(object) && Z_TYPE_P(EX(object)) == IS_OBJECT) {
-		if (Z_OBJ_HT_P(EX(object))->get_method == NULL) {
-			zend_error_noreturn(E_ERROR, "Object does not support method calls");
+	if (EX(object) == NULL) {
+		zend_error_noreturn(E_ERROR, "Method call to a null reference");
+	}
+
+	if (Z_TYPE_P(EX(object)) != IS_OBJECT) {
+		zval *retval = NULL;
+		zval **params[1] = { &EX(object) };
+		zval func_name;
+		ZVAL_STRINGL(&func_name, "__autobox", sizeof("__autobox") - 1, 1);
+		if (IS_OP1_TMP_FREE()) {
+			MAKE_REAL_ZVAL_PTR(*params[0]);
+		}
+		if (FAILURE == call_user_function_ex(CG(function_table), NULL, &func_name, &retval, sizeof(params) / sizeof(*params), params, 1, NULL)) {
+			retval = NULL;
+		}
+		zval_dtor(&func_name);
+		if (IS_OP1_TMP_FREE()) {
+			zval_ptr_dtor(params[0]);
 		}
 
-		/* First, locate the function. */
-		EX(fbc) = Z_OBJ_HT_P(EX(object))->get_method(&EX(object), function_name_strval, function_name_strlen TSRMLS_CC);
-		if (!EX(fbc)) {
-			zend_error_noreturn(E_ERROR, "Call to undefined method %s::%s()", Z_OBJ_CLASS_NAME_P(EX(object)), function_name_strval);
+		if (Z_TYPE_P(retval) != IS_OBJECT) {
+			zend_error_noreturn(E_ERROR, "Call to a member function %s() on a non-object", function_name_strval);
 		}
-		
-		EX(called_scope) = Z_OBJCE_P(EX(object));
-	} else {
-		zend_error_noreturn(E_ERROR, "Call to a member function %s() on a non-object", function_name_strval);
+
+		EX(object) = retval;
+		should_free_afterwards = 1;
 	}
-	
+
+	if (Z_OBJ_HT_P(EX(object))->get_method == NULL) {
+		zend_error_noreturn(E_ERROR, "Object does not support method calls");
+	}
+
+	/* First, locate the function. */
+	EX(fbc) = Z_OBJ_HT_P(EX(object))->get_method(&EX(object), function_name_strval, function_name_strlen TSRMLS_CC);
+	if (!EX(fbc)) {
+		zend_error_noreturn(E_ERROR, "Call to undefined method %s::%s()", Z_OBJ_CLASS_NAME_P(EX(object)), function_name_strval);
+	}
+
+	EX(called_scope) = Z_OBJCE_P(EX(object));
+
 	if ((EX(fbc)->common.fn_flags & ZEND_ACC_STATIC) != 0) {
 		EX(object) = NULL;
 	} else {		
-		if (!PZVAL_IS_REF(EX(object))) {
-			Z_ADDREF_P(EX(object)); /* For $this pointer */
-		} else {
-			zval *this_ptr;
-			ALLOC_ZVAL(this_ptr);
-			INIT_PZVAL_COPY(this_ptr, EX(object));
-			zval_copy_ctor(this_ptr);
-			EX(object) = this_ptr;
+		if (!should_free_afterwards) {
+			if (!PZVAL_IS_REF(EX(object))) {
+				Z_ADDREF_P(EX(object)); /* For $this pointer */
+			} else {
+				zval *this_ptr;
+				ALLOC_ZVAL(this_ptr);
+				INIT_PZVAL_COPY(this_ptr, EX(object));
+				zval_copy_ctor(this_ptr);
+				EX(object) = this_ptr;
+			}
 		}
 	}
 
