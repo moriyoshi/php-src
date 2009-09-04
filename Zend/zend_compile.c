@@ -20,6 +20,7 @@
 /* $Id$ */
 
 #include <zend_language_parser.h>
+#include "zend_language_scanner_defs.h"
 #include "zend.h"
 #include "zend_compile.h"
 #include "zend_constants.h"
@@ -4257,6 +4258,34 @@ void zend_do_fetch_lexical_variable(znode *varname, zend_bool is_ref TSRMLS_DC) 
 }
 /* }}} */
 
+void zend_do_fetch_lexical_variables(TSRMLS_C) /* {{{ */
+{
+	zend_op_array *op_array = CG(active_op_array);
+	zend_uint fetch_op_num = op_array->last;
+	zend_compiled_variable *p, *e;
+	zend_op *tmp_op_array;
+	zend_uint fetch_op_count;
+	zend_bool use_heap;
+
+	for (p = op_array->vars, e = op_array->vars + op_array->last_var; p != e; p++) {
+		znode varname;
+		varname.op_type = IS_CONST;
+		ZVAL_STRINGL(&varname.u.constant, p->name, p->name_len, 1);
+		zend_do_fetch_lexical_variable(&varname, 0 TSRMLS_CC);
+	}
+
+	fetch_op_count = op_array->last - fetch_op_num;
+	tmp_op_array = do_alloca(sizeof(zend_op) * fetch_op_count, use_heap);
+	memcpy(tmp_op_array, &op_array->opcodes[fetch_op_num], sizeof(zend_op) * fetch_op_count);
+	memmove(&op_array->opcodes[fetch_op_count], op_array->opcodes, sizeof(zend_op) * fetch_op_num); 
+	memcpy(op_array->opcodes, tmp_op_array, sizeof(zend_op) * fetch_op_count);
+	if (use_heap) {
+		efree(tmp_op_array);
+	}
+}
+/* }}} */
+
+
 void zend_do_fetch_global_variable(znode *varname, const znode *static_assignment, int fetch_type TSRMLS_DC) /* {{{ */
 {
 	zend_op *opline;
@@ -4932,8 +4961,12 @@ again:
 		case T_COMMENT:
 		case T_DOC_COMMENT:
 		case T_OPEN_TAG:
-		case T_WHITESPACE:
 			goto again;
+		case T_WHITESPACE:
+			if (LANG_SCNG(yy_state) != yycST_IN_SGML_TAG) {
+				goto again;
+			}
+			break;
 
 		case T_CLOSE_TAG:
 			if (LANG_SCNG(yy_text)[LANG_SCNG(yy_leng)-1] != '>') {

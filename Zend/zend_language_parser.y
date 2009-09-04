@@ -148,6 +148,10 @@
 %token T_NS_C
 %token T_DIR
 %token T_NS_SEPARATOR
+%token T_SGML_OPENTAG_PROLOG
+%token T_SGML_ENDTAG_PROLOG
+%token T_SGML_TAG_TERM
+%token T_SGML_EMPTYTAG_TERM
 
 %% /* Rules */
 
@@ -243,6 +247,7 @@ unticked_statement:
 	|	T_ECHO echo_expr_list ';'
 	|	T_INLINE_HTML			{ zend_do_echo(&$1 TSRMLS_CC); }
 	|	expr ';'				{ zend_do_free(&$1 TSRMLS_CC); }
+	|   variable '=' T_SL ';' sgml_tag_pair { zend_check_writable_variable(&$1); zend_do_assign(&$$, &$1, &$5 TSRMLS_CC); zend_do_free(&$$); }
 	|	T_UNSET '(' unset_variables ')' ';'
 	|	T_FOREACH '(' variable T_AS
 		{ zend_do_foreach_begin(&$1, &$2, &$3, &$4, 1 TSRMLS_CC); }
@@ -998,6 +1003,46 @@ class_constant:
 		class_name T_PAAMAYIM_NEKUDOTAYIM T_STRING { zend_do_fetch_constant(&$$, &$1, &$3, ZEND_RT, 0 TSRMLS_CC); }
 	|	variable_class_name T_PAAMAYIM_NEKUDOTAYIM T_STRING { zend_do_fetch_constant(&$$, &$1, &$3, ZEND_RT, 0 TSRMLS_CC); }
 ;
+
+optional_whitespace:
+		T_WHITESPACE
+	| /* empty */
+	;
+
+sgml_value:
+		T_STRING
+	| T_CONSTANT_ENCAPSED_STRING
+	| '{' { $1.u.opline_num = CG(zend_lineno); zend_do_begin_lambda_function_declaration(&$$, &$1, 0); } expr '}' { zend_do_return(&$3, 0 TSRMLS_CC); zend_do_fetch_lexical_variables(TSRMLS_C); zend_do_end_function_declaration(&$1 TSRMLS_CC); $$ = $2; }
+	;
+
+sgml_attributes:
+		sgml_attributes T_WHITESPACE T_STRING '=' sgml_value { zend_do_add_array_element(&$$, &$5, &$3, 0 TSRMLS_CC); }
+	| sgml_attributes T_WHITESPACE T_STRING { znode tmp; tmp.op_type = IS_CONST; Z_TYPE(tmp.u.constant) = IS_NULL; zend_do_add_array_element(&$$, &tmp, &$3, 0 TSRMLS_CC); }
+	| /* empty */ { zend_do_init_array(&$$, NULL, NULL, 0 TSRMLS_CC); }
+	;
+
+sgml_opentag:
+	T_SGML_OPENTAG_PROLOG sgml_attributes optional_whitespace T_SGML_TAG_TERM { znode tmp; zend_do_init_array(&$$, NULL, NULL, 0 TSRMLS_CC); tmp.op_type = IS_CONST; ZVAL_STRINGL(&tmp.u.constant, "name", sizeof("name") - 1, 1); zend_do_add_array_element(&$$, &$1, &tmp, 0 TSRMLS_CC); ZVAL_STRINGL(&tmp.u.constant, "attrs", sizeof("attrs") - 1, 1); zend_do_add_array_element(&$$, &$2, &tmp, 0 TSRMLS_CC); }
+	;
+
+sgml_endtag:
+	T_SGML_ENDTAG_PROLOG optional_whitespace T_SGML_TAG_TERM { zend_do_free(&$1 TSRMLS_CC); }
+	;
+
+inline_html_or_sgml_tag_pair:
+	sgml_tag_pair
+	| T_INLINE_HTML
+	;
+
+inline_html_or_sgml_tag_pairs:
+	inline_html_or_sgml_tag_pairs inline_html_or_sgml_tag_pair { zend_do_add_array_element(&$$, &$2, NULL, 0 TSRMLS_CC); }
+	| /* empty */ { zend_do_init_array(&$$, NULL, NULL, 0 TSRMLS_CC); }
+	;
+
+sgml_tag_pair:
+	sgml_opentag inline_html_or_sgml_tag_pairs sgml_endtag { znode tmp; tmp.op_type = IS_CONST; ZVAL_STRINGL(&tmp.u.constant, "contents", sizeof("contents") - 1, 1); zend_do_add_array_element(&$$, &$2, &tmp, 0 TSRMLS_CC); }
+	| T_SGML_OPENTAG_PROLOG sgml_attributes optional_whitespace T_SGML_EMPTYTAG_TERM { znode tmp; zend_do_init_array(&$$, NULL, NULL, 0 TSRMLS_CC); tmp.op_type = IS_CONST; ZVAL_STRINGL(&tmp.u.constant, "name", sizeof("name") - 1, 1); zend_do_add_array_element(&$$, &$1, &tmp, 0 TSRMLS_CC); ZVAL_STRINGL(&tmp.u.constant, "attrs", sizeof("attrs") - 1, 1); zend_do_add_array_element(&$$, &$2, &tmp, 0 TSRMLS_CC); }
+   ;
 
 %%
 
