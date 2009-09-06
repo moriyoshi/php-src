@@ -968,6 +968,10 @@ NEWLINE ("\r"|"\n"|"\r\n")
 	return T_GOTO;
 }
 
+<ST_IN_SCRIPTING>"on" {
+	return T_ON;
+}
+
 <ST_IN_SCRIPTING>"echo" {
 	return T_ECHO;
 }

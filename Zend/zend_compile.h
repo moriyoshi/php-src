@@ -22,6 +22,8 @@
 #ifndef ZEND_COMPILE_H
 #define ZEND_COMPILE_H
 
+#include <setjmp.h>
+
 #include "zend.h"
 
 #ifdef HAVE_STDARG_H
@@ -324,6 +326,10 @@ struct _zend_execute_data {
 	zval *current_this;
 	zval *current_object;
 	struct _zend_op *call_opline;
+	struct _zend_op *error_jmp;
+	struct _zend_execute_data *prev_error_handling_frame;
+	void (*prev_error_cb)(int type, const char *error_filename, const uint error_lineno, const char *format, va_list args);
+	JMP_BUF error_jmp_buf;
 };
 
 #define EX(element) execute_data.element
@@ -545,6 +551,7 @@ void zend_do_end_compilation(TSRMLS_D);
 
 void zend_do_label(znode *label TSRMLS_DC);
 void zend_do_goto(const znode *label TSRMLS_DC);
+void zend_do_on_event_goto(const znode *event, const znode *label TSRMLS_DC);
 void zend_resolve_goto_label(zend_op_array *op_array, zend_op *opline, int pass2 TSRMLS_DC);
 void zend_release_labels(TSRMLS_D);
 

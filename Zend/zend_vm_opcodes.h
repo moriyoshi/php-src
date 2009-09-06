@@ -133,6 +133,7 @@
 #define ZEND_INIT_STATIC_METHOD_CALL         113
 #define ZEND_ISSET_ISEMPTY_VAR               114
 #define ZEND_ISSET_ISEMPTY_DIM_OBJ           115
+#define ZEND_ON_EVENT_GOTO                   116
 #define ZEND_PRE_INC_OBJ                     132
 #define ZEND_PRE_DEC_OBJ                     133
 #define ZEND_POST_INC_OBJ                    134

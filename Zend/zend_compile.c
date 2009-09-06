@@ -1904,13 +1904,13 @@ void zend_resolve_goto_label(zend_op_array *op_array, zend_op *opline, int pass2
 	long current, distance;
 
 	if (CG(labels) == NULL ||
-	    zend_hash_find(CG(labels), Z_STRVAL(opline->op2.u.constant), Z_STRLEN(opline->op2.u.constant)+1, (void**)&dest) == FAILURE) {
+	    zend_hash_find(CG(labels), Z_STRVAL(opline->op1.u.constant), Z_STRLEN(opline->op1.u.constant)+1, (void**)&dest) == FAILURE) {
 
 	    if (pass2) {
 	    	CG(in_compilation) = 1;
 	    	CG(active_op_array) = op_array;
 	    	CG(zend_lineno) = opline->lineno;
-			zend_error(E_COMPILE_ERROR, "'goto' to undefined label '%s'", Z_STRVAL(opline->op2.u.constant));
+			zend_error(E_COMPILE_ERROR, "'goto' to undefined label '%s'", Z_STRVAL(opline->op1.u.constant));
 	    } else {
 			/* Label is not defined. Delay to pass 2. */
 			INC_BPC(op_array);
@@ -1918,8 +1918,9 @@ void zend_resolve_goto_label(zend_op_array *op_array, zend_op *opline, int pass2
 		}
 	}
 
+	zval_dtor(&opline->op1.u.constant);
+	SET_UNUSED(opline->op1);
 	opline->op1.u.opline_num = dest->opline_num;
-	zval_dtor(&opline->op2.u.constant);
 
 	/* Check that we are not moving into loop or switch */
 	current = opline->extended_value;
@@ -1935,17 +1936,18 @@ void zend_resolve_goto_label(zend_op_array *op_array, zend_op *opline, int pass2
 		current = op_array->brk_cont_array[current].parent;
 	}
 
-	if (distance == 0) {
+	if (distance == 0 && opline->opcode != ZEND_ON_EVENT_GOTO) {
 		/* Nothing to break out of, optimize to ZEND_JMP */
 		opline->opcode = ZEND_JMP;
 		opline->extended_value = 0;
 		SET_UNUSED(opline->op2);
 	} else {
 		/* Set real break distance */
-		ZVAL_LONG(&opline->op2.u.constant, distance);
+		opline->result.op_type = IS_CONST;
+		ZVAL_LONG(&opline->result.u.constant, distance);
 	}
 
-    if (pass2) {
+	if (pass2) {
 		DEC_BPC(op_array);
     }
 }
@@ -1957,8 +1959,20 @@ void zend_do_goto(const znode *label TSRMLS_DC) /* {{{ */
 
 	opline->opcode = ZEND_GOTO;
 	opline->extended_value = CG(active_op_array)->current_brk_cont;
-	SET_UNUSED(opline->op1);
-	opline->op2 = *label;
+	opline->op1 = *label;
+	SET_UNUSED(opline->op2);
+	zend_resolve_goto_label(CG(active_op_array), opline, 0 TSRMLS_CC);
+}
+/* }}} */
+
+void zend_do_on_event_goto(const znode *event, const znode *label TSRMLS_DC) /* {{{ */
+{
+	zend_op *opline = get_next_op(CG(active_op_array) TSRMLS_CC);
+
+	opline->opcode = ZEND_ON_EVENT_GOTO;
+	opline->extended_value = CG(active_op_array)->current_brk_cont;
+	opline->op1 = *label;
+	opline->op2 = *event;
 	zend_resolve_goto_label(CG(active_op_array), opline, 0 TSRMLS_CC);
 }
 /* }}} */

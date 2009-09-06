@@ -391,6 +391,7 @@ ZEND_API int pass_two(zend_op_array *op_array TSRMLS_DC)
 		}
 		switch (opline->opcode) {
 			case ZEND_GOTO:
+			case ZEND_ON_EVENT_GOTO:
 				if (Z_TYPE(opline->op2.u.constant) != IS_LONG) {
 					zend_resolve_goto_label(op_array, opline, 1 TSRMLS_CC);
 				}

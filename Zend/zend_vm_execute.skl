@@ -33,6 +33,9 @@ zend_vm_enter:
 	EX(symbol_table) = EG(active_symbol_table);
 	EX(prev_execute_data) = EG(current_execute_data);
 	EG(current_execute_data) = execute_data;
+	EX(error_jmp) = NULL;
+	EX(prev_error_handling_frame) = NULL;
+	EX(prev_error_cb) = NULL;
 	EX(nested) = nested;
 	nested = 1;
 
@@ -75,7 +78,50 @@ zend_vm_enter:
 	zend_error_noreturn(E_ERROR, "Arrived at end of main loop which shouldn't happen");
 }
 
+static void zend_error_jmp_handler(int type, const char *error_filename, const uint error_lineno, const char *format, va_list args);
+
 {%EXTERNAL_EXECUTOR%}
+
+void zend_error_jmp_handler(int type, const char *error_filename, const uint error_lineno, const char *format, va_list args)
+{
+	TSRMLS_FETCH();
+	zend_execute_data *execute_data = EG(current_execute_data);
+
+	while (execute_data != EG(error_handling_frame)) {
+		if (EX(function_state).function->type == ZEND_INTERNAL_FUNCTION) {
+			zval_ptr_dtor(&EX_T(EX(opline)->result.u.var).var.ptr);
+			zend_vm_stack_clear_multiple(TSRMLS_C);
+		}
+
+		zend_leave_helper_SPEC(ZEND_OPCODE_HANDLER_ARGS_PASSTHRU);
+		execute_data = EG(current_execute_data);
+#ifndef ZEND_VM_EXPORT
+		if (zend_execute != execute) {
+			zend_vm_stack_clear_multiple(TSRMLS_C);
+		}
+#else
+		zend_vm_stack_clear_multiple(TSRMLS_C);
+#endif
+		EG(return_value_ptr_ptr) = EX(original_return_value);
+		EG(active_symbol_table) = EX(symbol_table);
+		/* symbol table should have been cleaned up in zend_leave_helper */
+		if (EX(function_state).function->type == ZEND_USER_FUNCTION ||
+			EX(function_state).function->common.scope) {
+			EG(This) = EX(current_this);
+			EG(scope) = EX(current_scope);
+			EG(called_scope) = EX(current_called_scope);
+		}
+		EX(object) = EX(current_object);
+		EX(called_scope) = DECODE_CTOR(EX(called_scope));
+	}
+
+	if (EX(function_state).function->type == ZEND_INTERNAL_FUNCTION) {
+		zval_ptr_dtor(&EX_T(EX(opline)->result.u.var).var.ptr);
+		zend_vm_stack_clear_multiple(TSRMLS_C);
+	}
+
+	LONGJMP(EX(error_jmp_buf), 1);
+}
 
 void {%INITIALIZER_NAME%}(void)
 {

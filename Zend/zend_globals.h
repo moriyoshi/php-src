@@ -254,6 +254,8 @@ struct _zend_executor_globals {
 
 	zend_bool active; 
 
+	struct _zend_execute_data *error_handling_frame;
+
 	void *saved_fpu_cw;
 
 	void *reserved[ZEND_MAX_RESERVED_RESOURCES];

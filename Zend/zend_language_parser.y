@@ -148,6 +148,7 @@
 %token T_NS_C
 %token T_DIR
 %token T_NS_SEPARATOR
+%token T_ON
 
 %% /* Rules */
 
@@ -262,6 +263,7 @@ unticked_statement:
 		additional_catches { zend_do_mark_last_catch(&$7, &$18 TSRMLS_CC); }
 	|	T_THROW expr ';' { zend_do_throw(&$2 TSRMLS_CC); }
 	|	T_GOTO T_STRING ';' { zend_do_goto(&$2 TSRMLS_CC); }
+	|   T_ON T_STRING T_GOTO T_STRING ';' {  zend_do_on_event_goto(&$2, &$4 TSRMLS_CC); }
 ;
 
 

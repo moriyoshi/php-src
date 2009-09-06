@@ -2145,6 +2145,10 @@ ZEND_VM_HELPER(zend_leave_helper, ANY, ANY)
 	zend_bool nested;
 	zend_op_array *op_array = EX(op_array);
 
+	if (EG(error_handling_frame) == EG(current_execute_data)) {
+		zend_error_cb = EG(current_execute_data)->prev_error_cb;
+		EG(error_handling_frame) = EG(current_execute_data)->prev_error_handling_frame;
+	}
 	EG(current_execute_data) = EX(prev_execute_data);
 	EG(opline_ptr) = NULL;
 	if (!EG(active_symbol_table)) {
@@ -2820,7 +2824,7 @@ ZEND_VM_HANDLER(100, ZEND_GOTO, ANY, CONST)
 	zend_op *opline = EX(opline);
 	zend_brk_cont_element *el;
 
-	el = zend_brk_cont(&opline->op2.u.constant, opline->extended_value,
+	el = zend_brk_cont(&opline->result.u.constant, opline->extended_value,
  	                   EX(op_array), EX(Ts) TSRMLS_CC);
 
 	brk_opline = EX(op_array)->opcodes + el->brk;
@@ -2838,6 +2842,53 @@ ZEND_VM_HANDLER(100, ZEND_GOTO, ANY, CONST)
 			break;
 	}
 	ZEND_VM_JMP(opline->op1.u.jmp_addr);
+}
+
+ZEND_VM_HANDLER(116, ZEND_ON_EVENT_GOTO, ANY, CONST)
+{
+	zend_op *opline = EX(opline);
+	convert_to_string(&opline->op2.u.constant);
+
+	if (zend_binary_strcasecmp(Z_STRVAL(opline->op2.u.constant), Z_STRLEN(opline->op2.u.constant), "error", sizeof("error") - 1) != 0) {
+		zend_error_noreturn(E_ERROR, "Unknown event type: %s", Z_STRVAL(opline->op2.u.constant));
+	}
+
+	EX(prev_error_handling_frame) = EG(error_handling_frame);
+	EX(prev_error_cb) = zend_error_cb;
+	EG(error_handling_frame) = execute_data;
+	EX(error_jmp) = EX(opline);
+	zend_error_cb = zend_error_jmp_handler;
+	if (SETJMP(EX(error_jmp_buf))) {
+		zend_op *brk_opline;
+		zend_op *opline;
+		zend_brk_cont_element *el;
+		execute_data = EG(current_execute_data);
+		opline = EX(error_jmp);
+
+		if (Z_LVAL(opline->result.u.constant) > 0) {
+			el = zend_brk_cont(&opline->result.u.constant, opline->extended_value,
+							   EX(op_array), EX(Ts) TSRMLS_CC);
+
+			brk_opline = EX(op_array)->opcodes + el->brk;
+
+			switch (brk_opline->opcode) {
+				case ZEND_SWITCH_FREE:
+					if (brk_opline->op1.u.EA.type != EXT_TYPE_FREE_ON_RETURN) {
+						zend_switch_free(&EX_T(brk_opline->op1.u.var), brk_opline->extended_value TSRMLS_CC);
+					}
+					break;
+				case ZEND_FREE:
+					if (brk_opline->op1.u.EA.type != EXT_TYPE_FREE_ON_RETURN) {
+						zendi_zval_dtor(EX_T(brk_opline->op1.u.var).tmp_var);
+					}
+					break;
+			}
+		}
+	    ZEND_VM_SET_OPCODE(opline->op1.u.jmp_addr);
+		ZEND_VM_LEAVE();
+	} else {
+		ZEND_VM_NEXT_OPCODE();
+	}
 }
 
 ZEND_VM_HANDLER(48, ZEND_CASE, CONST|TMP|VAR|CV, CONST|TMP|VAR|CV)
