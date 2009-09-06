@@ -140,6 +140,8 @@ struct _zend_compiler_globals {
 	HashTable *labels;
 	zend_stack labels_stack;
 
+	char *ns_separator;
+
 #ifdef ZEND_MULTIBYTE
 	zend_encoding **script_encoding_list;
 	size_t script_encoding_list_size;

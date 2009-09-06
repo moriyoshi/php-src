@@ -1027,6 +1027,9 @@ NEWLINE ("\r"|"\n"|"\r\n")
 }
 
 <ST_IN_SCRIPTING>"\\" {
+	if (CG(ns_separator)[0] == '\0' || *yytext != CG(ns_separator)[0] || CG(ns_separator)[1] != '\0') {
+		zend_error_noreturn(E_COMPILE_ERROR, "%c is not a namespace separator", *yytext);
+	}
 	return T_NS_SEPARATOR;
 }
 
@@ -1669,7 +1672,23 @@ inline_html:
 	return T_ENCAPSED_AND_WHITESPACE;
 }
 
-<ST_IN_SCRIPTING,ST_VAR_OFFSET>{LABEL} {
+<ST_IN_SCRIPTING>{LABEL} {
+	size_t l = strlen(CG(ns_separator));
+	char *p = zend_memnstr(yytext, CG(ns_separator), l, yytext + yyleng);
+	if (p) {
+		if (p == yytext) {
+			yyless(l);
+			return T_NS_SEPARATOR;
+		} else {
+			yyless((p - yytext));
+		}
+	}
+	zend_copy_value(zendlval, yytext, yyleng);
+	zendlval->type = IS_STRING;
+	return T_STRING;
+}
+
+<ST_VAR_OFFSET>{LABEL} {
 	zend_copy_value(zendlval, yytext, yyleng);
 	zendlval->type = IS_STRING;
 	return T_STRING;

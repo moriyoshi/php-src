@@ -442,11 +442,13 @@ static FILE *zend_fopen_wrapper(const char *filename, char **opened_path TSRMLS_
 static zend_bool asp_tags_default		  = 0;
 static zend_bool short_tags_default		  = 1;
 static zend_bool ct_pass_ref_default	  = 1;
+static char *ns_separator_default         = NULL;
 static zend_uint compiler_options_default = ZEND_COMPILE_DEFAULT;
 #else
 # define asp_tags_default			0
 # define short_tags_default			1
 # define ct_pass_ref_default		1
+# define ns_separator_default       "\\"
 # define compiler_options_default	ZEND_COMPILE_DEFAULT
 #endif
 
@@ -455,6 +457,7 @@ static void zend_set_default_compile_time_values(TSRMLS_D) /* {{{ */
 	/* default compile-time values */
 	CG(asp_tags) = asp_tags_default;
 	CG(short_tags) = short_tags_default;
+	CG(ns_separator) = estrdup(ns_separator_default ? ns_separator_default: "\\");
 	CG(allow_call_time_pass_reference) = ct_pass_ref_default;
 	CG(compiler_options) = compiler_options_default;
 }
@@ -735,6 +738,7 @@ void zend_post_startup(TSRMLS_D) /* {{{ */
 
 	asp_tags_default = CG(asp_tags);
 	short_tags_default = CG(short_tags);
+	ns_separator_default = pestrdup(CG(ns_separator), 1);
 	ct_pass_ref_default = CG(allow_call_time_pass_reference);
 	compiler_options_default = CG(compiler_options);
 
@@ -769,6 +773,10 @@ void zend_shutdown(TSRMLS_D) /* {{{ */
 
 	free(GLOBAL_FUNCTION_TABLE);
 	free(GLOBAL_CLASS_TABLE);
+
+#ifdef ZTS
+	free(ns_separator_default);
+#endif
 
 	zend_hash_destroy(GLOBAL_CONSTANTS_TABLE);
 	free(GLOBAL_CONSTANTS_TABLE);
