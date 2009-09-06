@@ -4265,7 +4265,7 @@ void zend_do_fetch_lexical_variables(TSRMLS_C) /* {{{ */
 	zend_compiled_variable *p, *e;
 	zend_op *tmp_op_array;
 	zend_uint fetch_op_count;
-	zend_bool use_heap;
+	ALLOCA_FLAG(use_heap);
 
 	for (p = op_array->vars, e = op_array->vars + op_array->last_var; p != e; p++) {
 		znode varname;
