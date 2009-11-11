@@ -8,7 +8,7 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-	include "connect.inc";
+	require_once("connect.inc");
 
 	function dec32bin($dec, $bits) {
 
@@ -25,11 +25,11 @@ require_once('skipifconnectfailure.inc');
 		return $bin;
 	}
 
-	if (!$link_ins = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link_ins = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		printf("[001] Cannot connect to the server using host=%s, user=%s, passwd=***, dbname=%s, port=%s, socket=%s\n",
 			$host, $user, $db, $port, $socket);
 
-	if (!$link_sel = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link_sel = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		printf("[002] Cannot connect to the server using host=%s, user=%s, passwd=***, dbname=%s, port=%s, socket=%s\n",
 			$host, $user, $db, $port, $socket);
 

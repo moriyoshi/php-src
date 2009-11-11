@@ -13,7 +13,7 @@ mysqli.reconnect=0
 	require_once("connect.inc");
 	require_once("table.inc");
 
-	if (!$link2 = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link2 = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		printf("[001] Cannot create second database connection, [%d] %s\n",
 			mysqli_connect_errno(), mysqli_connect_error());
 
@@ -73,13 +73,24 @@ mysqli.reconnect=0
 		printf("[011] Executing a query should not be possible, connection should be closed, [%d] %s\n",
 			mysqli_errno($link), mysqli_error($link));
 
-	if (!$link = @mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link = @my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		printf("[012] Cannot create database connection, [%d] %s\n",
 			mysqli_connect_errno(), mysqli_connect_error());
 
 	$thread_id_timeout = mysqli_thread_id($link);
-	if (!mysqli_query($link, sprintf('KILL %d', $thread_id_timeout)))
-		printf("[013] Cannot KILL timeout connection, [%d] %s\n", mysqli_errno($link2), mysqli_error($link2));
+	if ($IS_MYSQLND) {
+		/* 
+		mysqlnd is a bit more verbose than libmysql. mysqlnd should print:
+		Warning: mysqli_query(): MySQL server has gone away in %s on line %d
+
+		Warning: mysqli_query(): Error reading result set's header in %d on line %d
+		*/
+		if (!@mysqli_query($link, sprintf('KILL %d', $thread_id_timeout)))
+			printf("[013] Cannot KILL timeout connection, [%d] %s\n", mysqli_errno($link2), mysqli_error($link2));
+	} else {
+		if (!mysqli_query($link, sprintf('KILL %d', $thread_id_timeout)))
+			printf("[013] Cannot KILL timeout connection, [%d] %s\n", mysqli_errno($link2), mysqli_error($link2));
+	}
 	// Give the server a second to really kill the other thread...
 	sleep(1);
 

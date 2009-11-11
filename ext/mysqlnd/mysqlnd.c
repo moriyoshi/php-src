@@ -96,7 +96,7 @@ MYSQLND_METHOD(mysqlnd_conn, free_options)(MYSQLND *conn TSRMLS_DC)
 		unsigned int i;
 		for (i = 0; i < conn->options.num_commands; i++) {
 			/* allocated with pestrdup */
-			pefree(conn->options.init_commands[i], pers);
+			mnd_pefree(conn->options.init_commands[i], pers);
 		}
 		mnd_pefree(conn->options.init_commands, pers);
 		conn->options.init_commands = NULL;
@@ -173,6 +173,11 @@ MYSQLND_METHOD(mysqlnd_conn, free_contents)(MYSQLND *conn TSRMLS_DC)
 		DBG_INF("Freeing passwd");
 		mnd_pefree(conn->passwd, pers);
 		conn->passwd = NULL;
+	}
+	if (conn->connect_or_select_db) {
+		DBG_INF("Freeing connect_or_select_db");
+		mnd_pefree(conn->connect_or_select_db, pers);
+		conn->connect_or_select_db = NULL;
 	}
 	if (conn->unix_socket) {
 		DBG_INF("Freeing unix_socket");
@@ -406,6 +411,8 @@ mysqlnd_simple_command(MYSQLND *conn, enum php_mysqlnd_server_command command,
 		cmd_packet.arg_len  = arg_len;
 	}
 
+	MYSQLND_INC_CONN_STATISTIC(&conn->stats, STAT_COM_QUIT + command - 1 /* because of COM_SLEEP */ );
+
 	if (! PACKET_WRITE_ALLOCA(cmd_packet, conn)) {
 		if (!silent) {
 			DBG_ERR_FMT("Error while sending %s packet", mysqlnd_command_to_text[command]);
@@ -508,8 +515,8 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 				host?host:"", user?user:"", db?db:"", port, mysql_flags,
 				conn? conn->persistent:0, conn? CONN_GET_STATE(conn):-1);
 
-	DBG_INF_FMT("state=%d", CONN_GET_STATE(conn));
 	if (conn && CONN_GET_STATE(conn) > CONN_ALLOCED && CONN_GET_STATE(conn) ) {
+		DBG_INF_FMT("state=%d", CONN_GET_STATE(conn));
 		DBG_INF("Connecting on a connected handle.");
 
 		if (CONN_GET_STATE(conn) < CONN_QUIT_SENT) {
@@ -586,6 +593,7 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 	} else {
 		conn->scheme = transport;
 	}
+	conn->scheme_len = strlen(conn->scheme);
 	DBG_INF(conn->scheme);
 	conn->net.stream = php_stream_xport_create(conn->scheme, transport_len, streams_options, streams_flags,
 											   hashed_details, 
@@ -627,6 +635,10 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 		mnd_efree(hashed_details);
 	}
 
+	if (!conn->options.timeout_read) {
+		/* should always happen because read_timeout cannot be set via API */
+		conn->options.timeout_read = (unsigned int) MYSQLND_G(net_read_timeout);
+	}
 	if (conn->options.timeout_read)
 	{
 		tv.tv_sec = conn->options.timeout_read;
@@ -660,12 +672,16 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 
 	conn->thread_id			= greet_packet.thread_id;
 	conn->protocol_version	= greet_packet.protocol_version;
-	conn->server_version	= greet_packet.server_version;
-	greet_packet.server_version = NULL; /* The string will be freed otherwise */
+	conn->server_version	= pestrdup(greet_packet.server_version, conn->persistent);
 
 	conn->greet_charset = mysqlnd_find_charset_nr(greet_packet.charset_no);
 	/* we allow load data local infile by default */
-	mysql_flags  |= CLIENT_LOCAL_FILES;
+	mysql_flags  |= CLIENT_LOCAL_FILES | CLIENT_PS_MULTI_RESULTS;
+#ifndef MYSQLND_COMPRESSION_ENABLED
+	if (mysql_flags & CLIENT_COMPRESS) {
+		mysql_flags &= ~CLIENT_COMPRESS;
+	}
+#endif
 
 	auth_packet->user		= user;
 	auth_packet->password	= passwd;
@@ -716,13 +732,19 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 		CONN_SET_STATE(conn, CONN_READY);
 
 		conn->user				= pestrdup(user, conn->persistent);
+		conn->user_len			= strlen(conn->user);
 		conn->passwd			= pestrndup(passwd, passwd_len, conn->persistent);
+		conn->passwd_len		= passwd_len;
 		conn->port				= port;
-		if (host && !socket) {
+		conn->connect_or_select_db = pestrndup(db, db_len, conn->persistent);
+		conn->connect_or_select_db_len = db_len;
+
+		if (!unix_socket) {
 			char *p;
 
 			conn->host = pestrdup(host, conn->persistent);
-			spprintf(&p, 0, "MySQL host info: %s via TCP/IP", conn->host);
+			conn->host_len = strlen(conn->host);
+			spprintf(&p, 0, "%s via TCP/IP", conn->host);
 			if (conn->persistent) {
 				conn->host_info = pestrdup(p, 1);
 				mnd_efree(p);
@@ -731,7 +753,8 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 			}
 		} else {
 			conn->unix_socket	= pestrdup(socket, conn->persistent);
-			conn->host_info		= pestrdup("MySQL host info: Localhost via UNIX socket", conn->persistent);
+			conn->unix_socket_len = strlen(conn->unix_socket);
+			conn->host_info		= pestrdup("Localhost via UNIX socket", conn->persistent);
 		}
 		conn->client_flag		= auth_packet->client_flags;
 		conn->max_packet_size	= auth_packet->max_packet_size;
@@ -748,8 +771,6 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 		SET_EMPTY_ERROR(conn->error_info);
 
 		conn->zval_cache = mysqlnd_palloc_get_thd_cache_reference(zval_cache);
-		conn->net.cmd_buffer.length = 128L*1024L;
-		conn->net.cmd_buffer.buffer = mnd_pemalloc(conn->net.cmd_buffer.length, conn->persistent);
 
 		mysqlnd_local_infile_default(conn);
 		{
@@ -763,13 +784,12 @@ PHPAPI MYSQLND *mysqlnd_connect(MYSQLND *conn,
 								   		(char *)&buf_size TSRMLS_CC);			
 		}
 
-		MYSQLND_INC_CONN_STATISTIC(&conn->stats, STAT_CONNECT_SUCCESS);
+		MYSQLND_INC_CONN_STATISTIC_W_VALUE2(&conn->stats, STAT_CONNECT_SUCCESS, 1, STAT_OPENED_CONNECTIONS, 1);
 		if (reconnect) {
 			MYSQLND_INC_GLOBAL_STATISTIC(STAT_RECONNECT);	
 		}
-		MYSQLND_INC_CONN_STATISTIC(&conn->stats, STAT_OPENED_CONNECTIONS);
 		if (conn->persistent) {
-			MYSQLND_INC_CONN_STATISTIC(&conn->stats, STAT_OPENED_PERSISTENT_CONNECTIONS);
+			MYSQLND_INC_CONN_STATISTIC_W_VALUE2(&conn->stats, STAT_PCONNECT_SUCCESS, 1, STAT_OPENED_PERSISTENT_CONNECTIONS, 1);
 		}
 
 		DBG_INF_FMT("connection_id=%llu", conn->thread_id);
@@ -877,6 +897,10 @@ MYSQLND_METHOD(mysqlnd_conn, query)(MYSQLND *conn, const char *query, unsigned i
 	  information from the ok packet. We will fetch it ourselves.
 	*/
 	ret = mysqlnd_query_read_result_set_header(conn, NULL TSRMLS_CC);
+	if (ret == PASS && conn->last_query_type == QUERY_UPSERT && conn->upsert_status.affected_rows) {
+		MYSQLND_INC_CONN_STATISTIC_W_VALUE(&conn->stats, STAT_ROWS_AFFECTED_NORMAL, conn->upsert_status.affected_rows);
+	}
+
 	DBG_RETURN(ret);
 }
 /* }}} */
@@ -1270,7 +1294,13 @@ MYSQLND_METHOD(mysqlnd_conn, select_db)(MYSQLND * const conn,
 	  a protocol of giving back -1. Thus we have to follow it :(
 	*/
 	SET_ERROR_AFF_ROWS(conn);
-
+	if (ret == PASS) {
+		if (conn->connect_or_select_db) {
+			pefree(conn->connect_or_select_db, conn->persistent);
+		}
+		conn->connect_or_select_db = pestrndup(db, db_len, conn->persistent);
+		conn->connect_or_select_db_len = db_len;
+	}
 	DBG_RETURN(ret);
 }
 /* }}} */
@@ -1820,7 +1850,8 @@ static enum_func_status
 MYSQLND_METHOD(mysqlnd_conn, change_user)(MYSQLND * const conn,
 										  const char *user,
 										  const char *passwd,
-										  const char *db TSRMLS_DC)
+										  const char *db,
+										  zend_bool silent TSRMLS_DC)
 {
 	/*
 	  User could be max 16 * 3 (utf8), pass is 20 usually, db is up to 64*3
@@ -1834,8 +1865,8 @@ MYSQLND_METHOD(mysqlnd_conn, change_user)(MYSQLND * const conn,
 	char *p = buffer;
 
 	DBG_ENTER("mysqlnd_conn::change_user");
-	DBG_INF_FMT("conn=%llu user=%s passwd=%s db=%s",
-				conn->thread_id, user?user:"", passwd?"***":"null", db?db:"");
+	DBG_INF_FMT("conn=%llu user=%s passwd=%s db=%s silent=%d",
+				conn->thread_id, user?user:"", passwd?"***":"null", db?db:"", (silent == TRUE)?1:0 );
 
 	if (!user) {
 		user = "";
@@ -1872,7 +1903,7 @@ MYSQLND_METHOD(mysqlnd_conn, change_user)(MYSQLND * const conn,
 
 	if (PASS != mysqlnd_simple_command(conn, COM_CHANGE_USER, buffer, p - buffer,
 									   PROT_LAST /* we will handle the OK packet*/,
-									   FALSE, TRUE TSRMLS_CC)) {
+									   silent, TRUE TSRMLS_CC)) {
 		DBG_RETURN(FAIL);
 	}
 
@@ -1939,7 +1970,12 @@ MYSQLND_METHOD(mysqlnd_conn, set_client_option)(MYSQLND * const conn,
 			break;
 #endif
 		case MYSQLND_OPT_NET_CMD_BUFFER_SIZE:
+			DBG_INF("MYSQLND_OPT_NET_CMD_BUFFER_SIZE");
+			if (*(unsigned int*) value < MYSQLND_NET_CMD_BUFFER_MIN_SIZE) {
+				DBG_RETURN(FAIL);
+			}
 			conn->net.cmd_buffer.length = *(unsigned int*) value;
+			DBG_INF_FMT("new_length=%u", conn->net.cmd_buffer.length);
 			if (!conn->net.cmd_buffer.buffer) {
 				conn->net.cmd_buffer.buffer = mnd_pemalloc(conn->net.cmd_buffer.length, conn->persistent);
 			} else {
@@ -1949,25 +1985,32 @@ MYSQLND_METHOD(mysqlnd_conn, set_client_option)(MYSQLND * const conn,
 			}
 			break;
 		case MYSQLND_OPT_NET_READ_BUFFER_SIZE:
+			DBG_INF("MYSQLND_OPT_NET_READ_BUFFER_SIZE");
 			conn->options.net_read_buffer_size = *(unsigned int*) value;
+			DBG_INF_FMT("new_length=%u", conn->options.net_read_buffer_size);
 			break;
 #ifdef MYSQLND_STRING_TO_INT_CONVERSION
 		case MYSQLND_OPT_INT_AND_FLOAT_NATIVE:
+			DBG_INF("MYSQLND_OPT_INT_AND_FLOAT_NATIVE");
 			conn->options.int_and_float_native = *(unsigned int*) value;
 			break;
 #endif
 		case MYSQL_OPT_CONNECT_TIMEOUT:
+			DBG_INF("MYSQL_OPT_CONNECT_TIMEOUT");
 			conn->options.timeout_connect = *(unsigned int*) value;
 			break;
 #ifdef WHEN_SUPPORTED_BY_MYSQLI
 		case MYSQL_OPT_READ_TIMEOUT:
+			DBG_INF("MYSQL_OPT_READ_TIMEOUT");
 			conn->options.timeout_read = *(unsigned int*) value;
 			break;
 		case MYSQL_OPT_WRITE_TIMEOUT:
+			DBG_INF("MYSQL_OPT_WRITE_TIMEOUT");
 			conn->options.timeout_write = *(unsigned int*) value;
 			break;
 #endif
 		case MYSQL_OPT_LOCAL_INFILE:
+			DBG_INF("MYSQL_OPT_LOCAL_INFILE");
 			if (!value || (*(unsigned int*) value) ? 1 : 0) {
 				conn->options.flags |= CLIENT_LOCAL_FILES;
 			} else {
@@ -1975,6 +2018,8 @@ MYSQLND_METHOD(mysqlnd_conn, set_client_option)(MYSQLND * const conn,
 			}
 			break;
 		case MYSQL_INIT_COMMAND:
+			DBG_INF("MYSQL_INIT_COMMAND");
+			DBG_INF_FMT("command=%s", value);
 			/* when num_commands is 0, then realloc will be effectively a malloc call, internally */
 			conn->options.init_commands = mnd_perealloc(conn->options.init_commands, sizeof(char *) * (conn->options.num_commands + 1),
 														conn->persistent);
@@ -1994,7 +2039,9 @@ MYSQLND_METHOD(mysqlnd_conn, set_client_option)(MYSQLND * const conn,
 			/* currently not supported. Todo!! */
 			break;
 		case MYSQL_SET_CHARSET_NAME:
+			DBG_INF("MYSQL_SET_CHARSET_NAME");
 			conn->options.charset_name = pestrdup(value, conn->persistent);
+			DBG_INF_FMT("charset=%s", conn->options.charset_name);
 			break;
 #ifdef WHEN_SUPPORTED_BY_MYSQLI
 		case MYSQL_SET_CHARSET_DIR:

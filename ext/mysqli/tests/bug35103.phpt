@@ -12,9 +12,9 @@ $drop = <<<EOSQL
 DROP TABLE test_bint;
 DROP TABLE test_buint;
 EOSQL;
-	include "connect.inc";
+	require_once("connect.inc");
 
-	$mysql = new mysqli($host, $user, $passwd, $db, $port, $socket);
+	$mysql = new my_mysqli($host, $user, $passwd, $db, $port, $socket);
 	$mysql->query("DROP TABLE IF EXISTS test_bint");
 	$mysql->query("CREATE TABLE test_bint (a bigint(20) default NULL) ENGINE=MYISAM");
 	$mysql->query("INSERT INTO test_bint VALUES (9223372036854775807),(-9223372036854775808),(-2147483648),(-2147483649),(-2147483647),(2147483647),(2147483648),(2147483649)");
@@ -53,8 +53,8 @@ EOSQL;
 ?>
 --CLEAN--
 <?php
-include "connect.inc";
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+require_once("connect.inc");
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
    printf("[c001] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 
 if (!mysqli_query($link, "DROP TABLE IF EXISTS test_bint") || !mysqli_query($link, "DROP TABLE IF EXISTS test_buint"))

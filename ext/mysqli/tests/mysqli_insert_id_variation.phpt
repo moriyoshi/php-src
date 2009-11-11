@@ -7,9 +7,9 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-include "connect.inc";
+require_once("connect.inc");
 
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
     printf("[001] Cannot connect to the server using host=%s, user=%s, passwd=***, dbname=%s, port=%s, socket=%s\n",
                         $host, $user, $db, $port, $socket);
 
@@ -90,8 +90,8 @@ echo "DONE";
 ?>
 --CLEAN--
 <?php
-include "connect.inc";
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+require_once("connect.inc");
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
    printf("[c001] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 
 if (!mysqli_query($link, "DROP TABLE IF EXISTS test_insert_id_var"))

@@ -754,7 +754,11 @@ static void php_cgi_ini_activate_user_config(char *path, int path_len, const cha
 		  if it is inside the docroot, we scan the tree up to the docroot 
 			to find more user.ini, if not we only scan the current path.
 		  */
+#ifdef PHP_WIN32
+		if (strnicmp(s1, s2, s_len) == 0) {
+#else 
 		if (strncmp(s1, s2, s_len) == 0) {
+#endif
 			ptr = s2 + start;  /* start is the point where doc_root ends! */
 			while ((ptr = strchr(ptr, DEFAULT_SLASH)) != NULL) {
 				*ptr = 0;
@@ -777,7 +781,7 @@ static void php_cgi_ini_activate_user_config(char *path, int path_len, const cha
 static int sapi_cgi_activate(TSRMLS_D)
 {
 	char *path, *doc_root, *server_name;
-	uint path_len, doc_root_len;
+	uint path_len, doc_root_len, server_name_len;
 
 	/* PATH_TRANSLATED should be defined at this stage but better safe than sorry :) */
 	if (!SG(request_info).path_translated) {
@@ -789,7 +793,11 @@ static int sapi_cgi_activate(TSRMLS_D)
 		server_name = sapi_cgibin_getenv("SERVER_NAME", sizeof("SERVER_NAME") - 1 TSRMLS_CC);
 		/* SERVER_NAME should also be defined at this stage..but better check it anyway */
 		if (server_name) {
-			php_ini_activate_per_host_config(server_name, strlen(server_name) + 1 TSRMLS_CC);
+			server_name_len = strlen(server_name);
+			server_name = estrndup(server_name, server_name_len);
+			zend_str_tolower(server_name, server_name_len);
+			php_ini_activate_per_host_config(server_name, server_name_len + 1 TSRMLS_CC);
+			efree(server_name);
 		}
 	}
 
@@ -820,13 +828,21 @@ static int sapi_cgi_activate(TSRMLS_D)
 			/* DOCUMENT_ROOT should also be defined at this stage..but better check it anyway */
 			if (doc_root) {
 				doc_root_len = strlen(doc_root);
-				if (IS_SLASH(doc_root[doc_root_len - 1])) {
+				if (doc_root_len > 0 && IS_SLASH(doc_root[doc_root_len - 1])) {
 					--doc_root_len;
 				}
+#ifdef PHP_WIN32
+				/* paths on windows should be case-insensitive */
+				doc_root = estrndup(doc_root, doc_root_len);
+				zend_str_tolower(doc_root, doc_root_len);
+#endif
 				php_cgi_ini_activate_user_config(path, path_len, doc_root, doc_root_len, doc_root_len - 1 TSRMLS_CC);
 			}
 		}
 
+#ifdef PHP_WIN32
+		efree(doc_root);
+#endif
 		efree(path);
 	}
 
@@ -1280,9 +1296,6 @@ static void init_request_info(TSRMLS_D)
 				if (pt) {
 					efree(pt);
 				}
-				if (is_valid_path(script_path_translated)) {
-					SG(request_info).path_translated = estrdup(script_path_translated);
-				}
 			} else {
 				/* make sure path_info/translated are empty */
 				if (!orig_script_filename ||
@@ -1311,9 +1324,6 @@ static void init_request_info(TSRMLS_D)
 				} else {
 					SG(request_info).request_uri = env_script_name;
 				}
-				if (is_valid_path(script_path_translated)) {
-					SG(request_info).path_translated = estrdup(script_path_translated);
-				}
 				free(real_path);
 			}
 		} else {
@@ -1326,9 +1336,10 @@ static void init_request_info(TSRMLS_D)
 			if (!CGIG(discard_path) && env_path_translated) {
 				script_path_translated = env_path_translated;
 			}
-			if (is_valid_path(script_path_translated)) {
-				SG(request_info).path_translated = estrdup(script_path_translated);
-			}
+		}
+
+		if (is_valid_path(script_path_translated)) {
+			SG(request_info).path_translated = estrdup(script_path_translated);
 		}
 
 		SG(request_info).request_method = sapi_cgibin_getenv("REQUEST_METHOD", sizeof("REQUEST_METHOD")-1 TSRMLS_CC);
@@ -2027,7 +2038,7 @@ consult the installation file that came with this distribution, or visit \n\
 				1. we are running from shell and got filename was there
 				2. we are running as cgi or fastcgi
 			*/
-			if (cgi || SG(request_info).path_translated) {
+			if (cgi || fastcgi || SG(request_info).path_translated) {
 				if (php_fopen_primary_script(&file_handle TSRMLS_CC) == FAILURE) {
 					if (errno == EACCES) {
 						SG(sapi_headers).http_response_code = 403;
@@ -2131,26 +2142,14 @@ consult the installation file that came with this distribution, or visit \n\
 
 fastcgi_request_done:
 			{
-				char *path_translated;
-
-				/* Go through this trouble so that the memory manager doesn't warn
-				 * about SG(request_info).path_translated leaking
-				 */
-				if (SG(request_info).path_translated) {
-					path_translated = strdup(SG(request_info).path_translated);
-					STR_FREE(SG(request_info).path_translated);
-					SG(request_info).path_translated = path_translated;
-				}
+				STR_FREE(SG(request_info).path_translated);
 
 				php_request_shutdown((void *) 0);
+
 				if (exit_status == 0) {
 					exit_status = EG(exit_status);
 				}
 
-				if (SG(request_info).path_translated) {
-					free(SG(request_info).path_translated);
-					SG(request_info).path_translated = NULL;
-				}
 				if (free_query_string && SG(request_info).query_string) {
 					free(SG(request_info).query_string);
 					SG(request_info).query_string = NULL;

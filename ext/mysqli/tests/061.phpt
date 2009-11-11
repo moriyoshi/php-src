@@ -9,7 +9,7 @@ if (!function_exists('mysqli_set_local_infile_handler'))
 ?>
 --FILE--
 <?php
-	include "connect.inc";
+	require_once("connect.inc");
 
 	function my_read($fp, &$buffer, $buflen, &$error) {
 		$buffer = strrev(fread($fp, $buflen));
@@ -17,7 +17,7 @@ if (!function_exists('mysqli_set_local_infile_handler'))
 	}
 
 	/*** test mysqli_connect 127.0.0.1 ***/
-	$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket);
+	$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket);
 
 	/* create temporary file */
 	$filename = dirname(__FILE__) . "061.csv";
@@ -51,8 +51,8 @@ if (!function_exists('mysqli_set_local_infile_handler'))
 ?>
 --CLEAN--
 <?php
-include "connect.inc";
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+require_once("connect.inc");
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
    printf("[c001] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 
 if (!mysqli_query($link, "DROP TABLE IF EXISTS t_061"))

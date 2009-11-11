@@ -254,7 +254,7 @@ struct st_mysqlnd_conn_methods
 	enum_func_status	(*kill_connection)(MYSQLND *conn, unsigned int pid TSRMLS_DC);
 	enum_func_status	(*select_db)(MYSQLND * const conn, const char * const db, unsigned int db_len TSRMLS_DC);
 	enum_func_status	(*server_dump_debug_information)(MYSQLND * const conn TSRMLS_DC);
-	enum_func_status	(*change_user)(MYSQLND * const conn, const char * user, const char * passwd, const char * db TSRMLS_DC);
+	enum_func_status	(*change_user)(MYSQLND * const conn, const char * user, const char * passwd, const char * db, zend_bool silent TSRMLS_DC);
 
 	unsigned int		(*get_error_no)(const MYSQLND * const conn);
 	const char *		(*get_error_str)(const MYSQLND * const conn);
@@ -360,10 +360,10 @@ struct st_mysqlnd_stmt_methods
 	enum_func_status	(*bind_parameters)(MYSQLND_STMT * const stmt, MYSQLND_PARAM_BIND * const param_bind TSRMLS_DC);
 	enum_func_status	(*bind_one_parameter)(MYSQLND_STMT * const stmt, unsigned int param_no, zval * const zv, zend_uchar	type TSRMLS_DC);
 	enum_func_status	(*refresh_bind_param)(MYSQLND_STMT * const stmt TSRMLS_DC);
-	void				(*set_param_bind_dtor)(MYSQLND_STMT * const stmt, void (*param_bind_dtor)(MYSQLND_PARAM_BIND *)  TSRMLS_DC);
+	void				(*set_param_bind_dtor)(MYSQLND_STMT * const stmt, void (*param_bind_dtor)(MYSQLND_PARAM_BIND * TSRMLS_DC) TSRMLS_DC);
 	enum_func_status	(*bind_result)(MYSQLND_STMT * const stmt, MYSQLND_RESULT_BIND * const result_bind TSRMLS_DC);
 	enum_func_status	(*bind_one_result)(MYSQLND_STMT * const stmt, unsigned int param_no TSRMLS_DC);
-	void				(*set_result_bind_dtor)(MYSQLND_STMT * const stmt, void (*result_bind_dtor)(MYSQLND_RESULT_BIND *) TSRMLS_DC);
+	void				(*set_result_bind_dtor)(MYSQLND_STMT * const stmt, void (*result_bind_dtor)(MYSQLND_RESULT_BIND * TSRMLS_DC) TSRMLS_DC);
 	enum_func_status	(*send_long_data)(MYSQLND_STMT * const stmt, unsigned int param_num,
 										  const char * const data, unsigned long length TSRMLS_DC);
 	MYSQLND_RES *		(*get_parameter_metadata)(MYSQLND_STMT * const stmt);
@@ -393,17 +393,23 @@ struct st_mysqlnd_connection
 
 /* Information related */
 	char			*host;
+	unsigned int	host_len;
 	char			*unix_socket;
+	unsigned int	unix_socket_len;
 	char			*user;
+	unsigned int	user_len;
 	char			*passwd;
-	unsigned int	*passwd_len;
+	unsigned int	passwd_len;
 	char			*scheme;
+	unsigned int	scheme_len;
 	uint64_t		thread_id;
 	char			*server_version;
 	char			*host_info;
 	unsigned char	*scramble;
 	const MYSQLND_CHARSET *charset;
 	const MYSQLND_CHARSET *greet_charset;
+	char 			*connect_or_select_db;
+	unsigned int	connect_or_select_db_len;
 	MYSQLND_INFILE	infile;
 	unsigned int	protocol_version;
 	unsigned long	max_packet_size;
@@ -625,8 +631,8 @@ struct st_mysqlnd_stmt
 	MYSQLND_CMD_BUFFER			execute_cmd_buffer;
 	unsigned int				execute_count;/* count how many times the stmt was executed */
 
-	void 						(*param_bind_dtor)(MYSQLND_PARAM_BIND *);
-	void 						(*result_bind_dtor)(MYSQLND_RESULT_BIND *);
+	void 						(*param_bind_dtor)(MYSQLND_PARAM_BIND * TSRMLS_DC);
+	void 						(*result_bind_dtor)(MYSQLND_RESULT_BIND * TSRMLS_DC);
 
 	struct st_mysqlnd_stmt_methods	*m;
 };

@@ -8,7 +8,6 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-	include "connect.inc";
 	require('table.inc');
 
 	if (false !== ($tmp = mysqli_prepare($link, false)))
@@ -21,7 +20,7 @@ require_once('skipifconnectfailure.inc');
 
 	mysqli_close($link);
 
-	if (!$mysqli = new mysqli($host, $user, $passwd, $db, $port, $socket))
+	if (!$mysqli = new my_mysqli($host, $user, $passwd, $db, $port, $socket))
 		printf("[003] Cannot connect to the server using host=%s, user=%s, passwd=***, dbname=%s, port=%s, socket=%s\n",
 			$host, $user, $db, $port, $socket);
 
