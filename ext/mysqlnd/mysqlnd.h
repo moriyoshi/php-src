@@ -22,11 +22,11 @@
 #ifndef MYSQLND_H
 #define MYSQLND_H
 
-#define MYSQLND_VERSION "mysqlnd 5.0.5-dev - 081106 - $Revision$"
-#define MYSQLND_VERSION_ID 50005
+#define MYSQLND_VERSION "mysqlnd 5.0.6-dev - 091022 - $Revision$"
+#define MYSQLND_VERSION_ID 50006
 
 /* This forces inlining of some accessor functions */
-#define MYSQLND_USE_OPTIMISATIONS 1
+#define MYSQLND_USE_OPTIMISATIONS 0
 
 #define MYSQLND_STRING_TO_INT_CONVERSION
 /*
@@ -96,7 +96,7 @@ PHPAPI MYSQLND * mysqlnd_connect(MYSQLND *conn,
 						  MYSQLND_THD_ZVAL_PCACHE *zval_cache
 						  TSRMLS_DC);
 
-#define mysqlnd_change_user(conn, user, passwd, db)		(conn)->m->change_user((conn), (user), (passwd), (db) TSRMLS_CC)
+#define mysqlnd_change_user(conn, user, passwd, db, silent)		(conn)->m->change_user((conn), (user), (passwd), (db), (silent) TSRMLS_CC)
 
 #define mysqlnd_debug(x)								_mysqlnd_debug((x) TSRMLS_CC)
 PHPAPI void _mysqlnd_debug(const char *mode TSRMLS_DC);
@@ -228,8 +228,8 @@ PHPAPI unsigned int	mysqlnd_get_client_version();
 /*****************************************************************************************************/
 
 
-PHPAPI void mysqlnd_efree_param_bind_dtor(MYSQLND_PARAM_BIND * param_bind);
-PHPAPI void mysqlnd_efree_result_bind_dtor(MYSQLND_RESULT_BIND * result_bind);
+PHPAPI void mysqlnd_efree_param_bind_dtor(MYSQLND_PARAM_BIND * param_bind TSRMLS_DC);
+PHPAPI void mysqlnd_efree_result_bind_dtor(MYSQLND_RESULT_BIND * result_bind TSRMLS_DC);
 
 
 PHPAPI const char * mysqlnd_field_type_name(enum mysqlnd_field_types field_type);
@@ -250,7 +250,7 @@ PHPAPI void mysqlnd_set_local_infile_handler(MYSQLND * const conn, const char * 
 #define mysqlnd_select_db(conn, db, db_len)	(conn)->m->select_db((conn), (db), (db_len) TSRMLS_CC)
 #define mysqlnd_ping(conn)					(conn)->m->ping((conn) TSRMLS_CC)
 #define mysqlnd_kill(conn, pid)				(conn)->m->kill_connection((conn), (pid) TSRMLS_CC)
-#define mysqlnd_refresh(conn, options)		(conn)->m->refresh_server((conn), (options) TSRMLS_CC) 
+#define mysqlnd_refresh(conn, options)		(conn)->m->refresh_server((conn), (options) TSRMLS_CC)
 #define mysqlnd_shutdown(conn, level)		(conn)->m->shutdown_server((conn), (level) TSRMLS_CC)
 #define mysqlnd_get_server_version(conn)	(conn)->m->get_server_version((conn))
 #define mysqlnd_set_character_set(conn, cs)	(conn)->m->set_charset((conn), (cs) TSRMLS_CC)
@@ -374,6 +374,7 @@ ZEND_BEGIN_MODULE_GLOBALS(mysqlnd)
 #ifdef MYSQLND_THREADED
 	THREAD_T		thread_id;
 #endif
+	long			net_read_timeout;
 ZEND_END_MODULE_GLOBALS(mysqlnd)
 
 ZEND_EXTERN_MODULE_GLOBALS(mysqlnd);

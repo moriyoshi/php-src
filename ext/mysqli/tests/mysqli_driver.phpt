@@ -8,8 +8,7 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-	include "connect.inc";
-	include "table.inc";
+	require("table.inc");
 
 	if (!is_object($driver = new mysqli_driver()))
 		printf("[001] Failed to create mysqli_driver object\n");
@@ -46,7 +45,7 @@ require_once('skipifconnectfailure.inc');
 	$ok = false;
 	try {
 
-		if ($link = mysqli_connect($host, $user . 'unknown_really', $passwd . 'non_empty', $db, $port, $socket))
+		if ($link = my_mysqli_connect($host, $user . 'unknown_really', $passwd . 'non_empty', $db, $port, $socket))
 			printf("[007] Can connect to the server using host=%s, user=%s, passwd=***non_empty, dbname=%s, port=%s, socket=%s\n",
 			$host, $user . 'unknown_really', $db, $port, $socket);
 			mysqli_close($link);
@@ -75,14 +74,14 @@ require_once('skipifconnectfailure.inc');
 
 
 	$driver->report_mode = MYSQLI_REPORT_OFF;
-	if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		printf("[016] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 	mysqli_query($link, "NO_SQL");
 	mysqli_close($link);
 
 	$driver->report_mode = MYSQLI_REPORT_ERROR;
 
-	if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		printf("[017] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 	mysqli_query($link, "NO_SQL");
 	mysqli_close($link);

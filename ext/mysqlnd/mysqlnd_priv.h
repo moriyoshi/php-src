@@ -37,14 +37,6 @@
 #include "TSRM.h"
 #endif
 
-#ifndef TRUE
-#define TRUE 1
-#endif
-
-#ifndef FALSE
-#define FALSE 0
-#endif
-
 #ifndef pestrndup
 #define pestrndup(s, length, persistent) ((persistent)?zend_strndup((s),(length)):estrndup((s),(length)))
 #endif
@@ -104,10 +96,12 @@
 		if ((buf)) { \
 			pefree((buf), (persistent)); \
 		} \
-		(buf) = (message); \
+		if ((message)) { \
+			(buf) = pestrndup((message), (len), (persistent)); \
+		} else { \
+			buf = NULL; \
+		} \
 		(buf_len) = (len); \
-		/* Transfer ownership*/ \
-		(message) = NULL; \
 	}
 
 #define SET_EMPTY_MESSAGE(buf, buf_len, persistent) \

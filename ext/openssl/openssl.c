@@ -51,6 +51,10 @@
 /* Common */
 #include <time.h>
 
+#ifdef NETWARE
+#define timezone _timezone	/* timezone is called _timezone in LibC */
+#endif
+
 #define DEFAULT_KEY_LENGTH	512
 #define MIN_KEY_LENGTH		384
 
@@ -1738,18 +1742,18 @@ PHP_FUNCTION(openssl_pkcs12_export_to_file)
 	int filename_len;
 	char * pass;
 	int pass_len;
-	zval *zcert = NULL, *zpkey = NULL, *args = NULL;
+	zval **zcert = NULL, *zpkey = NULL, *args = NULL;
 	EVP_PKEY *priv_key = NULL;
 	long certresource, keyresource;
 	zval ** item;
 	STACK_OF(X509) *ca = NULL;
 
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zszs|a", &zcert, &filename, &filename_len, &zpkey, &pass, &pass_len, &args) == FAILURE)
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "Zszs|a", &zcert, &filename, &filename_len, &zpkey, &pass, &pass_len, &args) == FAILURE)
 		return;
 
 	RETVAL_FALSE;
 	
-	cert = php_openssl_x509_from_zval(&zcert, 0, &certresource TSRMLS_CC);
+	cert = php_openssl_x509_from_zval(zcert, 0, &certresource TSRMLS_CC);
 	if (cert == NULL) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "cannot get cert from parameter 1");
 		return;
@@ -4323,8 +4327,15 @@ int php_openssl_apply_verification_policy(SSL *ssl, X509 *peer, php_stream *stre
 	GET_VER_OPT_STRING("CN_match", cnmatch);
 	if (cnmatch) {
 		int match = 0;
+		int name_len = X509_NAME_get_text_by_NID(name, NID_commonName, buf, sizeof(buf));
 
-		X509_NAME_get_text_by_NID(name, NID_commonName, buf, sizeof(buf));
+		if (name_len == -1) {
+			php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unable to locate peer certificate CN");
+			return FAILURE;
+		} else if (name_len != strlen(buf)) {
+			php_error_docref(NULL TSRMLS_CC, E_WARNING, "Peer certificate CN=`%.*s' is malformed", name_len, buf);
+			return FAILURE;
+		}
 
 		match = strcmp(cnmatch, buf) == 0;
 		if (!match && strlen(buf) > 3 && buf[0] == '*' && buf[1] == '.') {
@@ -4339,10 +4350,7 @@ int php_openssl_apply_verification_policy(SSL *ssl, X509 *peer, php_stream *stre
 
 		if (!match) {
 			/* didn't match */
-			php_error_docref(NULL TSRMLS_CC, E_WARNING,
-					"Peer certificate CN=`%s' did not match expected CN=`%s'",
-					buf, cnmatch);
-
+			php_error_docref(NULL TSRMLS_CC, E_WARNING, "Peer certificate CN=`%.*s' did not match expected CN=`%s'", name_len, buf, cnmatch);
 			return FAILURE;
 		}
 	}

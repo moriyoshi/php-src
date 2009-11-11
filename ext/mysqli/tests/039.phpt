@@ -7,11 +7,10 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-
-	include "connect.inc";
+	require_once("connect.inc");
 
 	/*** test mysqli_connect 127.0.0.1 ***/
-	$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket);
+	$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket);
 
 	mysqli_real_query($link, "SHOW VARIABLES");
 
