@@ -99,7 +99,7 @@ typedef struct _php_thread_rsrc_desc_t {
 
 static php_thread_global_ctx_t global_ctx;
 
-static ZEND_BEGIN_ARG_INFO_EX(arginfo_thread_create, 0, 0, 1)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_thread_create, 0, 0, 1)
 	ZEND_ARG_INFO(0, callable)
 	ZEND_ARG_INFO(0, ...)
 ZEND_END_ARG_INFO()
@@ -621,10 +621,10 @@ static int php_thread_convert_object_ref(zval **retval, zval *src,
 		void ***prev_tsrm_ls TSRMLS_DC)
 {
 	ALLOC_ZVAL(*retval);
-	if (src->is_ref) {
+	if (Z_ISREF_P(src)) {
 		(*retval)->type = IS_NULL;
 	} else {
-		if (src->type == IS_OBJECT) {
+		if (Z_TYPE_P(src) == IS_OBJECT) {
 			zend_class_entry *ce;
 			HashTable *props;
 			if (!Z_OBJ_HT_P(src)->get_class_entry
@@ -681,11 +681,11 @@ static int php_thread_convert_object_ref(zval **retval, zval *src,
 			zval_copy_ctor(*retval);
 		}
 	}
-	(*retval)->refcount = 1;
-	(*retval)->is_ref = 0;
+	Z_SET_REFCOUNT_P(*retval, 1);
+	Z_UNSET_ISREF_P(*retval);
 	return SUCCESS;
 fail:
-	FREE_ZVAL(retval);
+	FREE_ZVAL(*retval);
 	return FAILURE;
 }
 /* }}} */
@@ -771,7 +771,7 @@ out:
 
 	php_thread_entry_dispose(&entry TSRMLS_CC);
 
-	return (void*)EG(exit_status);
+	return (void*)(intptr_t)EG(exit_status);
 }
 /* }}} */
 
@@ -799,7 +799,7 @@ PHP_FUNCTION(thread_create)
 
 	if (!zend_is_callable(*args[0],
 				IS_CALLABLE_CHECK_NO_ACCESS,
-				&callable_str_repr)) {
+				&callable_str_repr TSRMLS_CC)) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "The argument (%s) is not callable", callable_str_repr);
 		efree(callable_str_repr);
 		RETVAL_FALSE;

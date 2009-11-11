@@ -2657,8 +2657,13 @@ ZEND_END_ARG_INFO()
 const zend_function_entry basic_functions[] = { /* {{{ */
 	PHP_FE(constant,														arginfo_constant)
 	PHP_FE(bin2hex,															arginfo_bin2hex)
-	PHP_FE(sleep,															arginfo_sleep)
-	PHP_FE(usleep,															arginfo_usleep)
+#if GNUPTH
+	ZEND_RAW_FENTRY("sleep", ZEND_FN(pth_sleep),	arginfo_sleep, 0)
+	ZEND_RAW_FENTRY("usleep", ZEND_FN(pth_usleep),	arginfo_usleep, 0)
+#else
+	PHP_FE(sleep,								arginfo_sleep)
+	PHP_FE(usleep,								arginfo_usleep)
+#endif
 #if HAVE_NANOSLEEP
 	PHP_FE(time_nanosleep,													arginfo_time_nanosleep)
 	PHP_FE(time_sleep_until,												arginfo_time_sleep_until)
