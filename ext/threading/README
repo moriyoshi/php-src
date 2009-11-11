@@ -1,0 +1,83 @@
+PHP User-land threading support
+===============================
+
+This adds a basic user-land threading support to the PHP scripting language.
+
+A typical example::
+
+  <?php
+  function echoing($fd) {
+      while (!feof($fd)) {
+          fwrite($fd, fgets($fd));
+      }
+      fclose($fd);
+  }
+  
+  $ssock = stream_socket_server('tcp://127.0.0.1:8000');
+  assert($ssock !== false);
+  
+  for (;;) {
+      $csock = stream_socket_accept($ssock);
+      thread_create('echoing', $csock);
+      fclose($csock);
+  }
+  ?>
+
+Why userland?
+-------------
+Using kernel threads in a poorly designed scripting runtime is kind of PITA
+because it would require a plenty of synchronization primitives (such as
+atomic memory operations) to be applied to the various portions of the code
+that prevent unserialized accesses from multiple processors. Furthermore,
+there are quite a few number of third-party libraries supported by PHP, most of
+which are unlikely designed to be reentrant in general sense.
+
+On the other hand, user threads are much easier to handle; it guarantees
+every task runs in the same processor and every single operation is performed
+coherently, thus there would be no need to patch the PHP runtime nor add a lot
+of workarounds to the libraries as the behavior is much more predictable within
+the same process context.
+
+Known bugs
+----------
+* Not a leak, yet the memory consumption gradually increases everytime a thread
+  gets created and won't decrease on its termination. This is due to poor
+  quality of the code that manages the subthreads.
+
+Current limitations
+-------------------
+* This is a experimental extension (TM) and there should still be many nasty
+  bugs.
+* Doesn't work for Windows.
+* A big turn-off -- threads cannot share a global context. Indeed they almost
+  look like processes. You may call me a liar :)
+* However, classes and functions are inherited to subthreads.
+* You can still pass data to the thread by giving them as arguments to the
+  entry point function.
+* Data are always duplicated when they get passed between threads.
+* Passing a container (an array or object) that contains one ore more
+  references results in an error.
+* Only a limited kinds of resources can be passed to another thread:
+
+  * File handles
+  * Sockets
+  * Thread handles
+  * Mutexes
+
+* File handles and sockets are dup'licated on passage.
+
+How to build PHP with threading support
+---------------------------------------
+1. Put the archive into ``ext/threading``
+2. Apply function_name_redefinition_fix.diff.patch to the PHP source. (-p0)
+3. Run ``./buildconf`` at the top of the source tree
+4. ``configure`` PHP with the following variables and flags::
+
+     LDFLAGS="`pth-config --libs --ldflags`" \
+     CPPFLAGS="`pth-config --cflags` -DPTH_SYSCALL_SOFT=1" \
+     ./configure --with-tsrm-pth=pth-config \
+                 --enable-maintainer-zts \
+                 $@
+
+5. make && make install
+6. Enjoy!
