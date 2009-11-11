@@ -24,7 +24,7 @@
 extern zend_module_entry enchant_module_entry;
 #define phpext_enchant_ptr &enchant_module_entry
 
-#define PHP_ENCHANT_VERSION "1.0.2-dev"
+#define PHP_ENCHANT_VERSION "1.1.0"
 
 #ifdef PHP_WIN32
 #define PHP_ENCHANT_API __declspec(dllexport)
@@ -36,9 +36,6 @@ extern zend_module_entry enchant_module_entry;
 #include "TSRM.h"
 #endif
 
-static void php_enchant_broker_free(zend_rsrc_list_entry *rsrc TSRMLS_DC);
-static void php_enchant_dict_free(zend_rsrc_list_entry *rsrc TSRMLS_DC);
-
 PHP_MINIT_FUNCTION(enchant);
 PHP_MSHUTDOWN_FUNCTION(enchant);
 PHP_MINFO_FUNCTION(enchant);
@@ -46,6 +43,8 @@ PHP_MINFO_FUNCTION(enchant);
 PHP_FUNCTION(enchant_broker_init);
 PHP_FUNCTION(enchant_broker_free);
 PHP_FUNCTION(enchant_broker_get_error);
+PHP_FUNCTION(enchant_broker_set_dict_path);
+PHP_FUNCTION(enchant_broker_get_dict_path);
 PHP_FUNCTION(enchant_broker_list_dicts);
 PHP_FUNCTION(enchant_broker_request_dict);
 PHP_FUNCTION(enchant_broker_request_pwl_dict);

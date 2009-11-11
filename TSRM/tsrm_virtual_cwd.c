@@ -428,6 +428,31 @@ CWD_API char *virtual_getcwd(char *buf, size_t size TSRMLS_DC) /* {{{ */
 }
 /* }}} */
 
+#ifdef PHP_WIN32
+static inline unsigned long realpath_cache_key(const char *path, int path_len TSRMLS_DC) /* {{{ */
+{
+	register unsigned long h;
+	char *bucket_key = tsrm_win32_get_path_sid_key(path TSRMLS_CC);
+	char *bucket_key_start = (char *)bucket_key;
+	const char *e = bucket_key + strlen(bucket_key);
+
+	if (!bucket_key) {
+		return 0;
+	}
+
+	for (h = 2166136261U; bucket_key < e;) {
+		h *= 16777619;
+		h ^= *bucket_key++;
+	}
+	/* if no SID were present the path is returned. Otherwise a Heap 
+	   allocated string is returned. */
+	if (bucket_key_start != path) {
+		LocalFree(bucket_key_start);
+	}
+	return h;
+}
+/* }}} */
+#else
 static inline unsigned long realpath_cache_key(const char *path, int path_len) /* {{{ */
 {
 	register unsigned long h;
@@ -441,6 +466,7 @@ static inline unsigned long realpath_cache_key(const char *path, int path_len) /
 	return h;
 }
 /* }}} */
+#endif /* defined(PHP_WIN32) */
 
 CWD_API void realpath_cache_clean(TSRMLS_D) /* {{{ */
 {
@@ -461,7 +487,11 @@ CWD_API void realpath_cache_clean(TSRMLS_D) /* {{{ */
 
 CWD_API void realpath_cache_del(const char *path, int path_len TSRMLS_DC) /* {{{ */
 {
+#ifdef PHP_WIN32
+	unsigned long key = realpath_cache_key(path, path_len TSRMLS_CC);
+#else
 	unsigned long key = realpath_cache_key(path, path_len);
+#endif
 	unsigned long n = key % (sizeof(CWDG(realpath_cache)) / sizeof(CWDG(realpath_cache)[0]));
 	realpath_cache_bucket **bucket = &CWDG(realpath_cache)[n];
 
@@ -494,8 +524,12 @@ static inline void realpath_cache_add(const char *path, int path_len, const char
 	if (CWDG(realpath_cache_size) + size <= CWDG(realpath_cache_size_limit)) {
 		realpath_cache_bucket *bucket = malloc(size);
 		unsigned long n;
-	
+
+#ifdef PHP_WIN32
+		bucket->key = realpath_cache_key(path, path_len TSRMLS_CC);
+#else
 		bucket->key = realpath_cache_key(path, path_len);
+#endif
 		bucket->path = (char*)bucket + sizeof(realpath_cache_bucket);
 		memcpy(bucket->path, path, path_len+1);
 		bucket->path_len = path_len;
@@ -524,7 +558,12 @@ static inline void realpath_cache_add(const char *path, int path_len, const char
 
 static inline realpath_cache_bucket* realpath_cache_find(const char *path, int path_len, time_t t TSRMLS_DC) /* {{{ */
 {
+#ifdef PHP_WIN32
+	unsigned long key = realpath_cache_key(path, path_len TSRMLS_CC);
+#else
 	unsigned long key = realpath_cache_key(path, path_len);
+#endif
+
 	unsigned long n = key % (sizeof(CWDG(realpath_cache)) / sizeof(CWDG(realpath_cache)[0]));
 	realpath_cache_bucket **bucket = &CWDG(realpath_cache)[n];
 
@@ -667,11 +706,14 @@ static int tsrm_realpath_r(char *path, int start, int len, int *ll, time_t *t, i
 			/* File is a reparse point. Get the target */
 			HANDLE hLink = NULL;
 			REPARSE_DATA_BUFFER * pbuffer;
-			unsigned int retlength = 0, rname_off = 0;
-			int bufindex = 0, rname_len = 0, isabsolute = 0;
+			unsigned int retlength = 0;
+			int bufindex = 0, isabsolute = 0;
 			wchar_t * reparsetarget;
-			WCHAR szVolumePathNames[MAX_PATH];
 			BOOL isVolume = FALSE;
+			char printname[MAX_PATH];
+			char substitutename[MAX_PATH];
+			int printname_len, substitutename_len;
+			int substitutename_off = 0;
 
 			if(++(*ll) > LINK_MAX) {
 				return -1;
@@ -692,33 +734,61 @@ static int tsrm_realpath_r(char *path, int start, int len, int *ll, time_t *t, i
 			CloseHandle(hLink);
 
 			if(pbuffer->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
-				rname_len = pbuffer->SymbolicLinkReparseBuffer.PrintNameLength/2;
-				rname_off = pbuffer->SymbolicLinkReparseBuffer.PrintNameOffset/2;
-				if(rname_len <= 0) {
-					rname_len = pbuffer->SymbolicLinkReparseBuffer.SubstituteNameLength/2;
-					rname_off = pbuffer->SymbolicLinkReparseBuffer.SubstituteNameOffset/2;
-				}
-
 				reparsetarget = pbuffer->SymbolicLinkReparseBuffer.ReparseTarget;
+				printname_len = pbuffer->MountPointReparseBuffer.PrintNameLength / sizeof(WCHAR);
 				isabsolute = (pbuffer->SymbolicLinkReparseBuffer.Flags == 0) ? 1 : 0;
+				if (!WideCharToMultiByte(CP_THREAD_ACP, 0, 
+					reparsetarget + pbuffer->MountPointReparseBuffer.PrintNameOffset  / sizeof(WCHAR),
+					printname_len + 1,
+					printname, MAX_PATH, NULL, NULL
+				)) {
+					tsrm_free_alloca(pbuffer, use_heap_large);
+					return -1;
+				};
+				printname_len = pbuffer->MountPointReparseBuffer.PrintNameLength / sizeof(WCHAR);
+				printname[printname_len] = 0;
+
+				substitutename_len = pbuffer->MountPointReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
+				if (!WideCharToMultiByte(CP_THREAD_ACP, 0, 
+					reparsetarget + pbuffer->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR),
+					substitutename_len + 1,
+					substitutename, MAX_PATH, NULL, NULL
+				)) {
+					tsrm_free_alloca(pbuffer, use_heap_large);
+					return -1;
+				};
+				substitutename[substitutename_len] = 0;
 			}
 			else if(pbuffer->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
-				rname_len = pbuffer->MountPointReparseBuffer.PrintNameLength/2;
-				rname_off = pbuffer->MountPointReparseBuffer.PrintNameOffset/2;
-				if(rname_len <= 0) {
-					rname_len = pbuffer->MountPointReparseBuffer.SubstituteNameLength/2;
-					rname_off = pbuffer->MountPointReparseBuffer.SubstituteNameOffset/2;
-				}
-
-				reparsetarget = pbuffer->MountPointReparseBuffer.ReparseTarget;
 				isabsolute = 1;
-			}
-			else {
+				reparsetarget = pbuffer->MountPointReparseBuffer.ReparseTarget;
+				printname_len = pbuffer->MountPointReparseBuffer.PrintNameLength / sizeof(WCHAR);
+				if (!WideCharToMultiByte(CP_THREAD_ACP, 0, 
+					reparsetarget + pbuffer->MountPointReparseBuffer.PrintNameOffset  / sizeof(WCHAR),
+					printname_len + 1,
+					printname, MAX_PATH, NULL, NULL
+				)) {
+					tsrm_free_alloca(pbuffer, use_heap_large);
+					return -1;
+				};
+				printname[pbuffer->MountPointReparseBuffer.PrintNameLength / sizeof(WCHAR)] = 0;
+
+				substitutename_len = pbuffer->MountPointReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
+				if (!WideCharToMultiByte(CP_THREAD_ACP, 0, 
+					reparsetarget + pbuffer->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR),
+					substitutename_len + 1,
+					substitutename, MAX_PATH, NULL, NULL
+				)) {
+					tsrm_free_alloca(pbuffer, use_heap_large);
+					return -1;
+				};
+				substitutename[substitutename_len] = 0;
+			} else {
 				tsrm_free_alloca(pbuffer, use_heap_large);
 				return -1;
 			}
 
-			if(isabsolute && rname_len > 4) {
+			if(isabsolute && substitutename_len > 4) {
 				/* Do not resolve volumes (for now). A mounted point can 
 				   target a volume without a drive, it is not certain that
 				   all IO functions we use in php and its deps support 
@@ -726,21 +796,22 @@ static int tsrm_realpath_r(char *path, int start, int len, int *ll, time_t *t, i
 				   d:\test\mnt\foo
 				   \\?\Volume{62d1c3f8-83b9-11de-b108-806e6f6e6963}\foo
 				*/
-				if (wcsncmp(reparsetarget,  L"\\??\\Volume{",11) == 0 
-					|| wcsncmp(reparsetarget,  L"\\\\?\\Volume{",11) == 0) {
+				if (strncmp(substitutename, "\\??\\Volume{",11) == 0 
+					|| strncmp(substitutename, "\\\\?\\Volume{",11) == 0) {
 					isVolume = TRUE;					
+					substitutename_off = 0;
 				} else
 					/* do not use the \??\ and \\?\ prefix*/
-					if (wcsncmp(reparsetarget,  L"\\??\\", 4) == 0 
-						|| wcsncmp(reparsetarget,  L"\\\\?\\", 4) == 0) {
-					rname_off += 4;
-					rname_len -= 4;
+					if (strncmp(substitutename, "\\??\\", 4) == 0 
+						|| strncmp(substitutename, "\\\\?\\", 4) == 0) {
+					substitutename_off = 4;
 				}
 			}
+
 			if (!isVolume) {
-				/* Convert wide string to narrow string */
-				for(bufindex = 0; bufindex < rname_len; bufindex++) {
-					*(path + bufindex) = (char)(reparsetarget[rname_off + bufindex]);
+				char * tmp = substitutename + substitutename_off;
+				for(bufindex = 0; bufindex < (substitutename_len - substitutename_off); bufindex++) {
+					*(path + bufindex) = *(tmp + bufindex);
 				}
 
 				*(path + bufindex) = 0;
@@ -748,6 +819,13 @@ static int tsrm_realpath_r(char *path, int start, int len, int *ll, time_t *t, i
 			} else {
 				j = len;
 			}
+
+
+#if VIRTUAL_CWD_DEBUG
+			fprintf(stderr, "reparse: print: %s ", printname);
+			fprintf(stderr, "sub: %s ", substitutename);
+			fprintf(stderr, "resolved: %s ", path);
+#endif
 			tsrm_free_alloca(pbuffer, use_heap_large);
 
 			if(isabsolute == 1) {
@@ -905,6 +983,7 @@ CWD_API int virtual_file_ex(cwd_state *state, const char *path, verify_path_func
 	time_t t;
 	int ret;
 	int add_slash;
+	void *tmp;
 	TSRMLS_FETCH();
 
 	if (path_length == 0 || path_length >= MAXPATHLEN-1) {
@@ -1049,7 +1128,16 @@ verify:
 
 		CWD_STATE_COPY(&old_state, state);
 		state->cwd_length = path_length;
-		state->cwd = (char *) realloc(state->cwd, state->cwd_length+1);
+
+		tmp = realloc(state->cwd, state->cwd_length+1);
+		if (tmp == NULL) {
+#if VIRTUAL_CWD_DEBUG
+			fprintf (stderr, "Out of memory\n");
+#endif
+			return 1;
+		}
+		state->cwd = (char *) tmp;
+
 		memcpy(state->cwd, resolved_path, state->cwd_length+1);
 		if (verify_path(state)) {
 			CWD_STATE_FREE(state);
@@ -1061,7 +1149,15 @@ verify:
 		}
 	} else {
 		state->cwd_length = path_length;
-		state->cwd = (char *) realloc(state->cwd, state->cwd_length+1);
+		tmp = realloc(state->cwd, state->cwd_length+1);
+		if (tmp == NULL) {
+#if VIRTUAL_CWD_DEBUG
+			fprintf (stderr, "Out of memory\n");
+#endif
+			return 1;
+		}
+		state->cwd = (char *) tmp;
+
 		memcpy(state->cwd, resolved_path, state->cwd_length+1);
 		ret = 0;
 	}

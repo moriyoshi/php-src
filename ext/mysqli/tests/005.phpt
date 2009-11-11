@@ -7,10 +7,10 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-	include "connect.inc";
+	require_once("connect.inc");
 
 	/*** test mysqli_connect 127.0.0.1 ***/
-	$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket);
+	$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket);
 
 	if (!mysqli_query($link, "DROP TABLE IF EXISTS test_bind_fetch"))
 		printf("[001] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
@@ -32,6 +32,9 @@ require_once('skipifconnectfailure.inc');
 
 	var_dump($test);
 
+	/* this will crash with libmysql from PHP 5.0.6 (or earlier) to 5.3.0 */
+	mysqli_fetch($stmt);
+
 	mysqli_stmt_close($stmt);
 	mysqli_query($link, "DROP TABLE IF EXISTS test_bind_fetch");
 	mysqli_close($link);
@@ -39,8 +42,8 @@ require_once('skipifconnectfailure.inc');
 ?>
 --CLEAN--
 <?php
-include "connect.inc";
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+require_once("connect.inc");
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
    printf("[c001] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 
 if (!mysqli_query($link, "DROP TABLE IF EXISTS test_bind_fetch"))

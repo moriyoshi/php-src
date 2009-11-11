@@ -20,9 +20,9 @@
 */
 
 /* These are unused */
-#define MYSQLI_CLOSE_EXPLICIT
-#define MYSQLI_CLOSE_IMPLICIT
-#define MYSQLI_CLOSE_DISCONNECTED
+#define MYSQLI_CLOSE_EXPLICIT 0
+#define MYSQLI_CLOSE_IMPLICIT 1
+#define MYSQLI_CLOSE_DISCONNECTED 2
 #define MYSQLND_OPT_NUMERIC_AND_DATETIME_AS_UNICODE	200
 #define MYSQLND_OPT_INT_AND_YEAR_AS_INT				201
 
@@ -34,3 +34,5 @@
 #define mysqli_close(c, is_forced)			mysql_close((c))
 #define mysqli_stmt_close(c, implicit)		mysql_stmt_close((c))
 #define mysqli_free_result(r, is_forced)	mysql_free_result((r))
+#define mysqli_change_user_silent(c, u, p, d)   mysql_change_user((c), (u), (p), (d))
+

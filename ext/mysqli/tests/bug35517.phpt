@@ -7,9 +7,9 @@ require_once('skipifconnectfailure.inc');
 ?>
 --FILE--
 <?php
-	include "connect.inc";
+	require_once("connect.inc");
 
-	$mysql = new mysqli($host, $user, $passwd, $db, $port, $socket);
+	$mysql = new my_mysqli($host, $user, $passwd, $db, $port, $socket);
 
 	$mysql->query("CREATE TABLE temp (id INT UNSIGNED NOT NULL)");
 	$mysql->query("INSERT INTO temp (id) VALUES (3000000897),(3800001532),(3900002281),(3100059612)");
@@ -39,8 +39,8 @@ require_once('skipifconnectfailure.inc');
 ?>
 --CLEAN--
 <?php
-include "connect.inc";
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+require_once("connect.inc");
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
    printf("[c001] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 
 if (!mysqli_query($link, "DROP TABLE IF EXISTS temp"))

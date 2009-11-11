@@ -244,12 +244,13 @@ static void php_disable_classes(TSRMLS_D)
  */
 static PHP_INI_MH(OnUpdateTimeout)
 {
-	EG(timeout_seconds) = atoi(new_value);
 	if (stage==PHP_INI_STAGE_STARTUP) {
 		/* Don't set a timeout on startup, only per-request */
+		EG(timeout_seconds) = atoi(new_value);
 		return SUCCESS;
 	}
 	zend_unset_timeout(TSRMLS_C);
+	EG(timeout_seconds) = atoi(new_value);
 	zend_set_timeout(EG(timeout_seconds), 0);
 	return SUCCESS;
 }
@@ -515,6 +516,7 @@ PHP_INI_BEGIN()
 	PHP_INI_ENTRY("mail.force_extra_parameters",NULL,		PHP_INI_SYSTEM|PHP_INI_PERDIR,		OnChangeMailForceExtra)
 	PHP_INI_ENTRY("disable_functions",			"",			PHP_INI_SYSTEM,		NULL)
 	PHP_INI_ENTRY("disable_classes",			"",			PHP_INI_SYSTEM,		NULL)
+	PHP_INI_ENTRY("max_file_uploads",			"20",			PHP_INI_SYSTEM,		NULL)
 
 	STD_PHP_INI_BOOLEAN("allow_url_fopen",		"1",		PHP_INI_SYSTEM,		OnUpdateBool,		allow_url_fopen,		php_core_globals,		core_globals)
 	STD_PHP_INI_BOOLEAN("allow_url_include",	"0",		PHP_INI_SYSTEM,		OnUpdateBool,		allow_url_include,		php_core_globals,		core_globals)
@@ -556,11 +558,18 @@ PHPAPI void php_log_err(char *log_message TSRMLS_DC)
 	int fd = -1;
 	time_t error_time;
 
+	if (PG(in_error_log)) {
+		/* prevent recursive invocation */
+		return;
+	}
+	PG(in_error_log) = 1;
+
 	/* Try to use the specified logging location. */
 	if (PG(error_log) != NULL) {
 #ifdef HAVE_SYSLOG_H
 		if (!strcmp(PG(error_log), "syslog")) {
 			php_syslog(LOG_NOTICE, "%.500s", log_message);
+			PG(in_error_log) = 0;
 			return;
 		}
 #endif
@@ -571,7 +580,7 @@ PHPAPI void php_log_err(char *log_message TSRMLS_DC)
 			char *error_time_str;
 
 			time(&error_time);
-			error_time_str = php_format_date("d-M-Y H:i:s", 11, error_time, php_during_module_startup() TSRMLS_CC);
+			error_time_str = php_format_date("d-M-Y H:i:s", 11, error_time, 1 TSRMLS_CC);
 			len = spprintf(&tmp, 0, "[%s] %s%s", error_time_str, log_message, PHP_EOL);
 #ifdef PHP_WIN32
 			php_flock(fd, 2);
@@ -580,6 +589,7 @@ PHPAPI void php_log_err(char *log_message TSRMLS_DC)
 			efree(tmp);
 			efree(error_time_str);
 			close(fd);
+			PG(in_error_log) = 0;
 			return;
 		}
 	}
@@ -589,6 +599,7 @@ PHPAPI void php_log_err(char *log_message TSRMLS_DC)
 	if (sapi_module.log_message) {
 		sapi_module.log_message(log_message);
 	}
+	PG(in_error_log) = 0;
 }
 /* }}} */
 
@@ -1352,6 +1363,7 @@ int php_request_startup(TSRMLS_D)
 #endif
 
 	zend_try {
+		PG(in_error_log) = 0;
 		PG(during_request_startup) = 1;
 
 		php_output_activate(TSRMLS_C);
@@ -2015,10 +2027,6 @@ int php_module_startup(sapi_module_struct *sf, zend_module_entry *additional_mod
 #endif
 
 	module_initialized = 1;
-	sapi_deactivate(TSRMLS_C);
-	module_startup = 0;
-
-	shutdown_memory_manager(1, 0 TSRMLS_CC);
 
 	/* Check for deprecated directives */
 	{
@@ -2047,6 +2055,11 @@ int php_module_startup(sapi_module_struct *sf, zend_module_entry *additional_mod
 			zend_error(E_ERROR, "zend.ze1_compatibility_mode is no longer supported in PHP 5.3 and greater");
 		}
 	}
+	
+	sapi_deactivate(TSRMLS_C);
+	module_startup = 0;
+
+	shutdown_memory_manager(1, 0 TSRMLS_CC);
 
 	/* we're done */
 	return SUCCESS;
@@ -2153,7 +2166,9 @@ PHPAPI int php_execute_script(zend_file_handle *primary_file TSRMLS_DC)
 		char realfile[MAXPATHLEN];
 
 #ifdef PHP_WIN32
-		UpdateIniFromRegistry(primary_file->filename TSRMLS_CC);
+		if(primary_file->filename) {
+			UpdateIniFromRegistry(primary_file->filename TSRMLS_CC);
+		}
 #endif
 
 		PG(during_request_startup) = 0;
@@ -2243,7 +2258,9 @@ PHPAPI int php_execute_simple_script(zend_file_handle *primary_file, zval **ret 
 
 	zend_try {
 #ifdef PHP_WIN32
-		UpdateIniFromRegistry(primary_file->filename TSRMLS_CC);
+		if(primary_file->filename) {
+			UpdateIniFromRegistry(primary_file->filename TSRMLS_CC);
+		}
 #endif
 
 		PG(during_request_startup) = 0;

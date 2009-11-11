@@ -4,9 +4,9 @@ function test: nested selects (cursors)
 <?php
 	require_once('skipif.inc');
 	require_once('skipifconnectfailure.inc');
-	include "connect.inc";
+	require_once("connect.inc");
 
-	if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+	if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
 		die("skip Cannot connect to check required version");
 
 	/* skip cursor test for versions < 50004 */
@@ -29,8 +29,8 @@ function test: nested selects (cursors)
 		return $stmt;
 	}
 
-	include "connect.inc";
-	$mysql = new mysqli($host, $user, $passwd, $db, $port, $socket);
+	require_once("connect.inc");
+	$mysql = new my_mysqli($host, $user, $passwd, $db, $port, $socket);
 
 	if ((!$IS_MYSQLND && mysqli_get_client_version() < 50009) ||
 		(mysqli_get_server_version($mysql) < 50009)) {
@@ -66,8 +66,8 @@ function test: nested selects (cursors)
 ?>
 --CLEAN--
 <?php
-include "connect.inc";
-if (!$link = mysqli_connect($host, $user, $passwd, $db, $port, $socket))
+require_once("connect.inc");
+if (!$link = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket))
    printf("[c001] [%d] %s\n", mysqli_connect_errno(), mysqli_connect_error());
 
 for ($i =0; $i < 3; $i++) {

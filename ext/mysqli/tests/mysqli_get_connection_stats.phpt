@@ -21,8 +21,7 @@ if (!function_exists('mysqli_get_connection_stats')) {
 	if (!is_null($tmp = @mysqli_get_connection_stats($link)))
 		printf("[002] Expecting NULL, got %s/%s\n", gettype($tmp), $tmp);
 
-	include "connect.inc";
-	include "table.inc";
+	require("table.inc");
 
 	if (!is_array($info = mysqli_get_connection_stats($link)) || empty($info))
 		printf("[003] Expecting array/any_non_empty, got %s/%s\n", gettype($info), $info);
@@ -47,18 +46,33 @@ if (!function_exists('mysqli_get_connection_stats')) {
 		var_dump($info2);
 	}
 
-	mysqli_close($link);
-	include "table.inc";
-
-	if (!is_array($info = mysqli_get_connection_stats($link)) || empty($info))
+	if (!is_array($info = $link->get_connection_stats()) || empty($info))
 		printf("[006] Expecting array/any_non_empty, got %s/%s\n", gettype($info), $info);
 
+	foreach ($info as $k => &$v) {
+		if (strpos($k, "mem_") === 0) {
+			$v = 0;
+		}
+	}
+
+	if ($info !== $info2) {
+		printf("[007] The hashes should be identical except of the memory related fields\n");
+		var_dump($info);
+		var_dump($info2);
+	}
+
+	mysqli_close($link);
+	require("table.inc");
+
+	if (!is_array($info = mysqli_get_connection_stats($link)) || empty($info))
+		printf("[008] Expecting array/any_non_empty, got %s/%s\n", gettype($info), $info);
+
 	if (!is_array($info2 = mysqli_get_client_stats()) || empty($info2))
-		printf("[007] Expecting array/any_non_empty, got %s/%s\n", gettype($info2), $info2);
+		printf("[009] Expecting array/any_non_empty, got %s/%s\n", gettype($info2), $info2);
 
 	// assuming the test is run in a plain-vanilla CLI environment
 	if ($info === $info2) {
-		printf("[008] The hashes should not be identical\n");
+		printf("[010] The hashes should not be identical\n");
 		var_dump($info);
 		var_dump($info2);
 	}
