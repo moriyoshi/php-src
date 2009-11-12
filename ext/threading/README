@@ -48,12 +48,12 @@ Current limitations
 -------------------
 * This is a experimental extension (TM) and there should still be many nasty
   bugs.
-* Doesn't work for Windows.
+* Doesn't work on Windows.
 * A big turn-off -- threads cannot share a global context. Indeed they almost
   look like processes. You may call me a liar :)
-* However, classes and functions are inherited to subthreads.
-* You can still pass data to the thread by giving them as arguments to the
-  entry point function.
+* However, classes and functions are imported to subthreads.
+* You can still pass data to a newly created thread by giving them as
+  arguments to the entry point function.
 * Data are always duplicated when they get passed between threads.
 * Passing a container (an array or object) that contains one ore more
   references results in an error.
