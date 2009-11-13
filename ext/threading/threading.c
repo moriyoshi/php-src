@@ -38,6 +38,12 @@
 #include "php_main.h"
 #include "main/php_network.h"
 
+#include <signal.h>
+
+#define bail_if_fail(X) if (!(X)) zend_bailout()
+
+typedef struct _php_thread_message_t php_thread_message_t;
+
 struct _php_thread_entry_t {
 	php_thread_entry_t *parent;
 	pth_t t;
@@ -54,6 +60,8 @@ struct _php_thread_entry_t {
 	void *exit_value;
 	unsigned finished:1;
 	unsigned destroyed:1;
+	pth_mutex_t gc_mtx;
+	php_thread_message_t *garbage;
 };
 
 typedef struct _php_thread_global_ctx_t {
@@ -61,6 +69,8 @@ typedef struct _php_thread_global_ctx_t {
 	pth_t main_thread;
 	int le_thread;
 	int le_mutex;
+	int le_msg_queue;
+	int le_msg_slot;
 	int tsrm_id;
 } php_thread_global_ctx_t;
 
@@ -76,9 +86,7 @@ typedef struct _php_thread_thread_param_t {
 	php_thread_entry_t *entry;
 	zend_compiler_globals *compiler_globals;
 	zend_executor_globals *executor_globals;
-	zval *callable;
-	int nargs;
-	zval ***args;
+	zend_fcall_info callable;
 	int status;
 } php_thread_thread_param_t;
 
@@ -87,6 +95,43 @@ typedef struct _php_thread_mutex_t {
 	pth_mutex_t m;
 	int refcount;
 } php_thread_mutex_t;
+
+struct _php_thread_message_t {
+	zval *value;
+	php_thread_entry_t *thd;
+	php_thread_message_t *next;
+	php_thread_message_t *prev;
+};
+
+typedef struct _php_thread_message_queue_t {
+	pth_mutex_t mtx;
+	pth_cond_t cond;
+	php_thread_message_t *first;
+	php_thread_message_t *last;
+	int refcount;
+} php_thread_message_queue_t;
+
+typedef struct _php_thread_message_sender_t php_thread_message_sender_t;
+
+struct _php_thread_message_sender_t {
+	pth_mutex_t mtx;
+	pth_cond_t cond;
+	zval *value;
+	void ***tsrm_ls;
+	php_thread_message_sender_t *prev;
+	php_thread_message_sender_t *next;
+};
+
+typedef struct _php_thread_message_slot_t {
+	pth_mutex_t mtx;
+	pth_cond_t cond;
+	php_thread_message_sender_t *first;
+	php_thread_message_sender_t *last;
+	zval *value;
+	void ***tsrm_ls;
+	int nsubs;
+	int refcount;
+} php_thread_message_slot_t;
 
 typedef void *(*php_thread_rsrc_clone_fn_t)(const void *src, int persistent, void ***prev_tsrm_ls TSRMLS_DC);
 
@@ -112,9 +157,16 @@ zend_function_entry threading_functions[] = {
 	PHP_FE(thread_create,	arginfo_thread_create)
 	PHP_FE(thread_suspend,	NULL)
 	PHP_FE(thread_resume,	NULL)
+	PHP_FE(thread_join,	NULL)
 	PHP_FE(thread_mutex_create,	NULL)
 	PHP_FE(thread_mutex_acquire,	NULL)
 	PHP_FE(thread_mutex_release,	NULL)
+	PHP_FE(thread_message_queue_create,	NULL)
+	PHP_FE(thread_message_queue_post,	NULL)
+	PHP_FE(thread_message_queue_poll,	NULL)
+	PHP_FE(thread_message_slot_create,	NULL)
+	PHP_FE(thread_message_slot_post,	NULL)
+	PHP_FE(thread_message_slot_subscribe,	NULL)
 	{NULL, NULL, NULL}	/* Must be the last line in threading_functions[] */
 };
 /* }}} */
@@ -155,6 +207,9 @@ PHP_INI_END()
 
 static void php_thread_entry_dispose(php_thread_entry_t **entry TSRMLS_DC);
 
+static int php_thread_convert_object_ref(zval **retval, zval *src,
+		void ***prev_tsrm_ls TSRMLS_DC);
+
 /* {{{ php_thread_entry_addref() */
 static void php_thread_entry_addref(php_thread_entry_t *entry)
 {
@@ -164,15 +219,21 @@ static void php_thread_entry_addref(php_thread_entry_t *entry)
 
 /* {{{ php_thread_entry_join() */
 static int php_thread_entry_join(php_thread_entry_t *entry,
-		void *retval TSRMLS_DC)
+		zval **retval TSRMLS_DC)
 {
 	if (entry == PHP_THREAD_SELF) {
 		return FAILURE;
 	}
 	php_thread_entry_addref(entry);
 	if (!entry->finished) {
-		assert(pth_join(entry->t, retval));
+		zval *tmp;
+		bail_if_fail(pth_join(entry->t, (void **)&tmp));
 		assert(entry->finished);
+		if (tmp != NULL) {
+			*retval = tmp;
+		}
+	} else {
+		retval = NULL;
 	}
 	php_thread_entry_dispose(&entry TSRMLS_CC);
 	return SUCCESS;
@@ -278,7 +339,7 @@ static void php_thread_entry_dispose(php_thread_entry_t **entry TSRMLS_DC)
 /* }}} */
 
 /* {{{ php_thread_entry_ctor() */
-static void php_thread_entry_ctor(php_thread_entry_t *entry,
+static int php_thread_entry_ctor(php_thread_entry_t *entry,
 		php_thread_entry_t *parent, size_t serial)
 {
 	entry->serial = serial;
@@ -291,6 +352,11 @@ static void php_thread_entry_ctor(php_thread_entry_t *entry,
 	entry->refcount = 1;
 	entry->t = NULL;
 	entry->parent = parent;
+	if (!pth_mutex_init(&entry->gc_mtx)) {
+		return FAILURE;
+	}
+	entry->garbage = NULL;
+	return SUCCESS;
 }
 /* }}} */
 
@@ -379,6 +445,310 @@ static int php_thread_mutex_ctor(php_thread_mutex_t *mtx)
 	mtx->refcount = 1;
 	mtx->owner = NULL;
 	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_post */
+static int php_thread_message_queue_post(php_thread_message_queue_t *queue, zval *value TSRMLS_DC)
+{
+	php_thread_message_t *msg = pemalloc(sizeof(php_thread_message_t), 1);
+	if (!msg) {
+		return FAILURE;
+	}
+	msg->value = value;
+	msg->next = NULL;
+
+	if (!pth_mutex_acquire(&queue->mtx, 0, NULL)) {
+		pefree(msg, 1);
+		return FAILURE;
+	}
+	if (!queue->last) {
+		queue->first = msg;
+	} else {
+		queue->last->next = msg;
+	}
+	msg->prev = queue->last;
+	msg->thd = PHP_THREAD_SELF;
+	queue->last = msg;
+
+	Z_ADDREF_P(value);
+	bail_if_fail(pth_cond_notify(&queue->cond, FALSE));
+	bail_if_fail(pth_mutex_release(&queue->mtx));
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_poll */
+static int php_thread_message_queue_poll(php_thread_message_queue_t *queue, zval **retval TSRMLS_DC)
+{
+	php_thread_message_t *msg;
+	if (!pth_mutex_acquire(&queue->mtx, 0, NULL)) {
+		return FAILURE;
+	}
+	while (!queue->first) {
+		if (!pth_cond_await(&queue->cond, &queue->mtx, NULL)) {
+			bail_if_fail(pth_mutex_release(&queue->mtx));
+			return FAILURE;
+		}
+	}
+	msg = queue->first;
+	if (msg->prev) {
+		msg->prev->next = msg->next;
+	} else {
+		queue->first = msg->next;
+	}
+	if (msg->next) {
+		msg->next->prev = msg->prev;
+	} else {
+		queue->last = msg->prev;
+	}
+
+	if (SUCCESS != php_thread_convert_object_ref(retval, msg->value,
+			msg->thd->tsrm_ls TSRMLS_CC)) {
+		ALLOC_INIT_ZVAL(*retval);
+	}
+
+	bail_if_fail(pth_mutex_acquire(&msg->thd->gc_mtx, 0, NULL));
+	msg->next = NULL;
+	msg->prev = msg->thd->garbage;
+	msg->thd->garbage = msg;
+	bail_if_fail(pth_mutex_release(&msg->thd->gc_mtx));
+
+	bail_if_fail(pth_mutex_release(&queue->mtx));
+
+	pth_raise(msg->thd->t, 31);
+
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_addref */
+static void php_thread_message_queue_addref(php_thread_message_queue_t *queue)
+{
+	++queue->refcount;
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_clone() */
+static php_thread_message_queue_t *php_thread_message_queue_clone(
+		const php_thread_message_queue_t *src, int persistent,
+		void ***prev_tsrm_ls TSRMLS_DC)
+{
+	php_thread_message_queue_addref((php_thread_message_queue_t *)src);
+	return (php_thread_message_queue_t *)src;
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_dtor() */
+static void php_thread_message_queue_dtor(php_thread_message_queue_t *queue)
+{
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_ctor() */
+static int php_thread_message_queue_ctor(php_thread_message_queue_t *queue)
+{
+	if (!pth_mutex_init(&queue->mtx)) {
+		return FAILURE;
+	}
+	if (!pth_cond_init(&queue->cond)) {
+		return FAILURE;
+	}
+	queue->first = queue->last = NULL;
+	queue->refcount = 1;
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_queue_dispose */
+static void php_thread_message_queue_dispose(php_thread_message_queue_t **queue TSRMLS_DC)
+{
+	if (!*queue) {
+		return;
+	}
+
+	--(*queue)->refcount;
+	if ((*queue)->refcount <= 0) {
+		php_thread_message_queue_dtor(*queue);
+		pefree(*queue, 1);
+	}
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_enqueue_self_and_sleep */
+static int php_thread_message_slot_enqueue_self_and_sleep(php_thread_message_slot_t *slot, zval *value TSRMLS_DC)
+{
+	php_thread_message_sender_t *sender = pemalloc(sizeof(php_thread_message_sender_t), 1);
+	if (!sender) {
+		return FAILURE;
+	}
+
+	if (!pth_mutex_init(&sender->mtx)) {
+		pefree(sender, 1);
+		return FAILURE;
+	}
+
+	if (!pth_cond_init(&sender->cond)) {
+		pefree(sender, 1);
+		return FAILURE;
+	}
+
+	sender->value = value;
+	sender->tsrm_ls = tsrm_ls;
+
+	if (!pth_mutex_acquire(&slot->mtx, 0, NULL)) {
+		pefree(sender, 1);
+		return FAILURE;
+	}
+
+	if (slot->last) {
+		slot->last->next = sender;
+	} else {
+		slot->first = sender;
+	}
+	sender->prev = slot->last;
+	sender->next = NULL;
+	slot->last = sender;
+
+	bail_if_fail(pth_mutex_release(&slot->mtx));
+
+	if (!pth_mutex_acquire(&sender->mtx, 0, NULL)) {
+		return FAILURE;
+	}
+	if (!pth_cond_await(&sender->cond, &sender->mtx, NULL)) {
+		bail_if_fail(pth_mutex_release(&sender->mtx));
+		return FAILURE;
+	}
+	bail_if_fail(pth_mutex_release(&sender->mtx));
+	if (!sender->next && !sender->prev)
+		pefree(sender, 1);
+
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_post */
+static int php_thread_message_slot_post(php_thread_message_slot_t *slot, zval *value TSRMLS_DC)
+{
+	if (slot->nsubs == 0) {
+		return php_thread_message_slot_enqueue_self_and_sleep(slot, value TSRMLS_CC);
+	}
+
+	if (!pth_mutex_acquire(&slot->mtx, 0, NULL)) {
+		zval_ptr_dtor(&value);
+		return FAILURE;
+	}
+	Z_ADDREF_P(value);
+	slot->value = value;
+	slot->tsrm_ls = tsrm_ls;
+	bail_if_fail(pth_cond_notify(&slot->cond, TRUE));
+	bail_if_fail(pth_mutex_release(&slot->mtx));
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_subscribe */
+static int php_thread_message_slot_subscribe(php_thread_message_slot_t *slot, zval **retval TSRMLS_DC)
+{
+	php_thread_message_t *msg;
+	if (!pth_mutex_acquire(&slot->mtx, 0, NULL)) {
+		return FAILURE;
+	}
+	if (slot->nsubs == 0 && slot->first) {
+		php_thread_message_sender_t *sender = slot->first;
+
+		if (SUCCESS != php_thread_convert_object_ref(retval, sender->value,
+				sender->tsrm_ls TSRMLS_CC)) {
+			ALLOC_INIT_ZVAL(*retval);
+		}
+		if (sender->next) {
+			sender->next->prev = sender->prev;
+		} else {
+			slot->last = sender->prev;
+		}
+		if (sender->prev) {
+			sender->prev->next = sender->next;
+		} else {
+			slot->first = sender->next;
+		}
+		sender->next = sender->prev = NULL;
+		bail_if_fail(pth_mutex_acquire(&sender->mtx, 0, NULL));
+		bail_if_fail(pth_cond_notify(&sender->cond, FALSE));
+		bail_if_fail(pth_mutex_release(&sender->mtx));
+		bail_if_fail(pth_mutex_release(&slot->mtx));
+		return SUCCESS;
+	}
+	slot->nsubs++;
+	if (!pth_cond_await(&slot->cond, &slot->mtx, NULL)) {
+		bail_if_fail(pth_mutex_release(&slot->mtx));
+		return FAILURE;
+	}
+	bail_if_fail(pth_mutex_release(&slot->mtx));
+
+	if (SUCCESS != php_thread_convert_object_ref(retval, slot->value,
+			slot->tsrm_ls TSRMLS_CC)) {
+		ALLOC_INIT_ZVAL(*retval);
+	}
+
+	if (slot->nsubs == 0) {
+		zval_ptr_dtor(&slot->value);
+	}
+
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_addref */
+static void php_thread_message_slot_addref(php_thread_message_slot_t *slot)
+{
+	++slot->refcount;
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_clone() */
+static php_thread_message_slot_t *php_thread_message_slot_clone(
+		const php_thread_message_slot_t *src, int persistent,
+		void ***prev_tsrm_ls TSRMLS_DC)
+{
+	php_thread_message_slot_addref((php_thread_message_slot_t *)src);
+	return (php_thread_message_slot_t *)src;
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_dtor() */
+static void php_thread_message_slot_dtor(php_thread_message_slot_t *slot)
+{
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_ctor() */
+static int php_thread_message_slot_ctor(php_thread_message_slot_t *slot)
+{
+	if (!pth_mutex_init(&slot->mtx)) {
+		return FAILURE;
+	}
+	if (!pth_cond_init(&slot->cond)) {
+		return FAILURE;
+	}
+	slot->first = slot->last = NULL;
+	slot->nsubs = 0;
+	slot->refcount = 1;
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ php_thread_message_slot_dispose */
+static void php_thread_message_slot_dispose(php_thread_message_slot_t **slot TSRMLS_DC)
+{
+	if (!*slot) {
+		return;
+	}
+
+	--(*slot)->refcount;
+	if ((*slot)->refcount <= 0) {
+		php_thread_message_slot_dtor(*slot);
+		pefree(*slot, 1);
+	}
 }
 /* }}} */
 
@@ -563,6 +933,14 @@ static int php_thread_get_rsrc_desc(php_thread_rsrc_desc_t *retval, int le_id)
 		retval->size = sizeof(php_thread_mutex_t);
 		retval->persistent = 0;
 		retval->clone = (php_thread_rsrc_clone_fn_t)php_thread_mutex_clone;
+	} else if (le_id == global_ctx.le_msg_queue) {
+		retval->size = sizeof(php_thread_message_queue_t);
+		retval->persistent = 0;
+		retval->clone = (php_thread_rsrc_clone_fn_t)php_thread_message_queue_clone;
+	} else if (le_id == global_ctx.le_msg_slot) {
+		retval->size = sizeof(php_thread_message_slot_t);
+		retval->persistent = 0;
+		retval->clone = (php_thread_rsrc_clone_fn_t)php_thread_message_slot_clone;
 	} else {
 		return FAILURE;
 	}
@@ -578,9 +956,6 @@ static void *php_thread_clone_resource(const php_thread_rsrc_desc_t *desc,
 	return desc->clone(ptr, desc->persistent, prev_tsrm_ls TSRMLS_CC);
 }
 /* }}} */
-
-static int php_thread_convert_object_ref(zval **retval, zval *src,
-		void ***prev_tsrm_ls TSRMLS_DC);
 
 /* {{{ php_thread_convert_object_refs_in_hash() */
 static HashTable *php_thread_convert_object_refs_in_hash(HashTable *src,
@@ -695,15 +1070,15 @@ static void *_php_thread_entry_func(php_thread_thread_param_t *param)
 {
 	TSRMLS_FETCH();
 	php_thread_entry_t *entry = param->entry;
-	int nargs = param->nargs;
+	zend_fcall_info callable = param->callable;
 	zval **args;
-	zval *callable;
+	zval* retval = NULL;
 	int i;
 
 	if (FAILURE == php_request_startup(TSRMLS_C)) {
-		assert(pth_mutex_acquire(&param->ready_cond_mtx, 0, NULL));
-		assert(pth_cond_notify(&param->ready_cond, 0));
-		assert(pth_mutex_release(&param->ready_cond_mtx));
+		bail_if_fail(pth_mutex_acquire(&param->ready_cond_mtx, 0, NULL));
+		bail_if_fail(pth_cond_notify(&param->ready_cond, 0));
+		bail_if_fail(pth_mutex_release(&param->ready_cond_mtx));
 		return NULL;
 	}
 
@@ -711,6 +1086,9 @@ static void *_php_thread_entry_func(php_thread_thread_param_t *param)
 
 	++entry->parent->alive_subthread_count;
 	php_thread_entry_addref(entry);
+
+	callable.function_name = NULL;
+	callable.object_ptr = NULL;
 
 	zend_try {
 		PHP_THREAD_SELF = entry;
@@ -722,15 +1100,29 @@ static void *_php_thread_entry_func(php_thread_thread_param_t *param)
 				(zend_executor_globals*)(*tsrm_ls)[TSRM_UNSHUFFLE_RSRC_ID(executor_globals_id)],
 				(zend_executor_globals*)(*entry->parent->tsrm_ls)[TSRM_UNSHUFFLE_RSRC_ID(executor_globals_id)]);
 
-		args = safe_emalloc(nargs, sizeof(zval*), 0);
-		for (i = 0; i < nargs; ++i) {
+		callable.params = safe_emalloc(param->callable.param_count, sizeof(zval**), 0);
+		args = safe_emalloc(param->callable.param_count, sizeof(zval*), 0);
+		for (i = 0; i < param->callable.param_count; ++i) {
 			if (FAILURE == php_thread_convert_object_ref(&args[i],
-					*param->args[i], entry->parent->tsrm_ls TSRMLS_CC)) {
+					*param->callable.params[i],
+					entry->parent->tsrm_ls TSRMLS_CC)) {
+				zend_bailout();
+			}
+			callable.params[i] = &args[i];
+		}
+
+		if (param->callable.object_ptr) {
+			if (FAILURE == php_thread_convert_object_ref(
+					&callable.object_ptr,
+					param->callable.object_ptr,
+					entry->parent->tsrm_ls TSRMLS_CC)) {
 				zend_bailout();
 			}
 		}
 
-		if (FAILURE == php_thread_convert_object_ref(&callable, param->callable,
+		if (FAILURE == php_thread_convert_object_ref(
+				&callable.function_name,
+				param->callable.function_name,
 				entry->parent->tsrm_ls TSRMLS_CC)) {
 			zend_bailout();
 		}
@@ -738,30 +1130,53 @@ static void *_php_thread_entry_func(php_thread_thread_param_t *param)
 		param->status = 0; /* no error */
 	} zend_end_try();
 
-	assert(pth_mutex_acquire(&param->ready_cond_mtx, 0, NULL));
-	assert(pth_cond_notify(&param->ready_cond, 0));
-	assert(pth_mutex_release(&param->ready_cond_mtx));
+	if (!pth_mutex_acquire(&param->ready_cond_mtx, 0, NULL)) {
+		goto out;
+	}
+	if (!pth_cond_notify(&param->ready_cond, 0)) {
+		bail_if_fail(pth_mutex_release(&param->ready_cond_mtx));
+		goto out;
+	}
+	bail_if_fail(pth_mutex_release(&param->ready_cond_mtx));
 
 	if (param->status) {
 		goto out;
 	}
 
 	zend_try {
-		zval retval;
-		retval.type = IS_NULL;
-		call_user_function(CG(function_table), NULL, callable,
-				&retval, nargs, args TSRMLS_CC);
-		zval_dtor(&retval);
+		ALLOC_INIT_ZVAL(retval);
+		callable.retval_ptr_ptr = &retval;
+		if (FAILURE == zend_call_function(&callable, NULL TSRMLS_CC)) {
+			zval_ptr_dtor(&retval);
+			retval = NULL;
+		} else {
+			zval *new_retval;
+			if (FAILURE == php_thread_convert_object_ref(&new_retval,
+					retval, tsrm_ls, entry->parent->tsrm_ls)) {
+				zval_ptr_dtor(&retval);
+				retval = NULL;
+			} else {
+				retval = new_retval;
+			}
+		}
 	} zend_end_try();
 
 	php_thread_entry_wait(entry TSRMLS_CC);
 
 out:
-	for (i = 0; i < nargs; ++i) {
+	for (i = 0; i < callable.param_count; ++i) {
 		zval_ptr_dtor(&args[i]);
 	}
 
-	zval_ptr_dtor(&callable);
+	if (callable.function_name) {
+		zval_ptr_dtor(&callable.function_name);
+	}
+
+	if (callable.object_ptr) {
+		zval_ptr_dtor(&callable.object_ptr);
+	}
+
+	efree(callable.params);
 	efree(args);
 
 	php_request_shutdown(NULL);
@@ -771,7 +1186,7 @@ out:
 
 	php_thread_entry_dispose(&entry TSRMLS_CC);
 
-	return (void*)(intptr_t)EG(exit_status);
+	return (void*)retval;
 }
 /* }}} */
 
@@ -781,6 +1196,8 @@ PHP_FUNCTION(thread_create)
 {
 	zval ***args = NULL;
 	char *callable_str_repr = NULL;
+	php_thread_thread_param_t param;
+	zend_fcall_info_cache fcc;
 	int nargs;
 
 	{
@@ -797,30 +1214,36 @@ PHP_FUNCTION(thread_create)
 		}
 	}
 
-	if (!zend_is_callable(*args[0],
-				IS_CALLABLE_CHECK_NO_ACCESS,
-				&callable_str_repr TSRMLS_CC)) {
+	if (zend_fcall_info_init(*args[0], 0, &param.callable, &fcc,
+				NULL, &callable_str_repr TSRMLS_CC) != SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "The argument (%s) is not callable", callable_str_repr);
 		efree(callable_str_repr);
 		RETVAL_FALSE;
 		goto out;
+	} else {
+		if (callable_str_repr) {
+			php_error_docref(NULL TSRMLS_CC, E_STRICT, "The argument (%s) is not callable", callable_str_repr);
+			efree(callable_str_repr);
+		} else {
+			efree(callable_str_repr);
+		}
 	}
-	efree(callable_str_repr);
 
 	{
 		php_thread_entry_t *current_entry = PHP_THREAD_SELF;
-		php_thread_thread_param_t param = {
-			PTH_MUTEX_INIT,
-			PTH_COND_INIT,
-			NULL,
-			(zend_compiler_globals*)(*tsrm_ls)[TSRM_UNSHUFFLE_RSRC_ID(compiler_globals_id)],
-			(zend_executor_globals*)(*tsrm_ls)[TSRM_UNSHUFFLE_RSRC_ID(executor_globals_id)],
-			*args[0],
-			nargs - 1,
-			args + 1,
-			-1
-		};
-
+		if (!pth_mutex_init(&param.ready_cond_mtx)) {
+			RETVAL_FALSE;
+			goto out;
+		}
+		if (!pth_cond_init(&param.ready_cond)) {
+			RETVAL_FALSE;
+			goto out;
+		}
+		param.compiler_globals = (zend_compiler_globals*)(*tsrm_ls)[TSRM_UNSHUFFLE_RSRC_ID(compiler_globals_id)];
+		param.executor_globals = (zend_executor_globals*)(*tsrm_ls)[TSRM_UNSHUFFLE_RSRC_ID(executor_globals_id)];
+		param.callable.param_count = nargs - 1;
+		param.callable.params = args + 1;
+		param.status = -1;
 		param.entry = pemalloc(sizeof(*param.entry), 1);
 		if (!param.entry) {
 			php_error_docref(NULL TSRMLS_CC, E_WARNING, "Insufficient memory");
@@ -848,8 +1271,13 @@ PHP_FUNCTION(thread_create)
 			current_entry->subthreads.v = new_list;
 		}
 
-		php_thread_entry_ctor(param.entry, current_entry,
-				current_entry->subthreads.n);
+		if (FAILURE == php_thread_entry_ctor(param.entry, current_entry,
+				current_entry->subthreads.n)) {
+			pefree(param.entry, 1);
+			php_error_docref(NULL TSRMLS_CC, E_WARNING, "Failed to spawn a new thread");
+			RETVAL_FALSE;
+			goto out;
+		}
 		++current_entry->subthreads.n;
 		param.entry->t = pth_spawn(PTH_ATTR_DEFAULT,
 				(void*(*)(void*))_php_thread_entry_func, &param);
@@ -861,9 +1289,9 @@ PHP_FUNCTION(thread_create)
 			goto out;
 		}
 
-		assert(pth_mutex_acquire(&param.ready_cond_mtx, 0, NULL));
-		assert(pth_cond_await(&param.ready_cond, &param.ready_cond_mtx, NULL));
-		assert(pth_mutex_release(&param.ready_cond_mtx));
+		bail_if_fail(pth_mutex_acquire(&param.ready_cond_mtx, 0, NULL));
+		bail_if_fail(pth_cond_await(&param.ready_cond, &param.ready_cond_mtx, NULL));
+		bail_if_fail(pth_mutex_release(&param.ready_cond_mtx));
 
 		if (param.status) {
 			--current_entry->subthreads.n;
@@ -920,11 +1348,41 @@ PHP_FUNCTION(thread_resume)
 }
 /* }}} */
 
+/* {{{ proto mixed thread_join(resource thread)
+   Wait for a thread to complete */
+PHP_FUNCTION(thread_join)
+{
+	zval *zv;
+	php_thread_entry_t *entry;
+
+	if (FAILURE == zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "r", &zv)) {
+		RETURN_FALSE;
+	}
+
+	ZEND_FETCH_RESOURCE(entry, php_thread_entry_t *, &zv, -1, "thread handle",
+			global_ctx.le_thread);
+
+	{
+		zval *tmp;
+		php_thread_entry_join(entry, &tmp TSRMLS_CC);
+		if (tmp) {
+			*return_value = *tmp;
+			FREE_ZVAL(tmp);
+		} else {
+			RETVAL_NULL();
+		}
+	}
+}
+/* }}} */
+
 /* {{{ proto resource thread_mutex_create()
    Creates a mutex */
 PHP_FUNCTION(thread_mutex_create)
 {
 	php_thread_mutex_t *mtx = pemalloc(sizeof(*mtx), 1);
+	if (!mtx) {
+		RETURN_FALSE;
+	}
 	if (FAILURE == php_thread_mutex_ctor(mtx)) {
 		pefree(mtx, 1);
 		RETURN_FALSE;
@@ -981,6 +1439,126 @@ PHP_FUNCTION(thread_mutex_release)
 }
 /* }}} */
 
+/* {{{ proto mixed thread_message_queue_create()
+   Create a message queue */
+PHP_FUNCTION(thread_message_queue_create)
+{
+	php_thread_message_queue_t *queue = pemalloc(sizeof(*queue), 1);
+	if (!queue) {
+		RETURN_FALSE;
+	}
+	if (FAILURE == php_thread_message_queue_ctor(queue)) {
+		pefree(queue, 1);
+		RETURN_FALSE;
+	}
+	ZEND_REGISTER_RESOURCE(return_value, queue, global_ctx.le_msg_queue);
+}
+/* }}} */
+
+/* {{{ proto mixed thread_message_queue_post(resource queue, mixed message)
+   Post a message queue */
+PHP_FUNCTION(thread_message_queue_post)
+{
+	int retval;
+	zval *zv, *msg;
+	php_thread_message_queue_t *queue;
+
+	if (FAILURE == zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rz", &zv, &msg)) {
+		RETURN_FALSE;
+	}
+
+	ZEND_FETCH_RESOURCE(queue, php_thread_message_queue_t*, &zv, -1, "thread message queue",
+			global_ctx.le_msg_queue);
+
+	RETVAL_BOOL(SUCCESS == php_thread_message_queue_post(queue, msg TSRMLS_CC));
+}
+/* }}} */
+
+/* {{{ proto mixed thread_message_queue_poll(resource queue)
+   Poll on a message queue */
+PHP_FUNCTION(thread_message_queue_poll)
+{
+	int retval;
+	zval *zv;
+	php_thread_message_queue_t *queue;
+	zval *tmp;
+
+	if (FAILURE == zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "r", &zv)) {
+		RETURN_FALSE;
+	}
+
+	ZEND_FETCH_RESOURCE(queue, php_thread_message_queue_t*, &zv, -1, "thread message queue",
+			global_ctx.le_msg_queue);
+
+	if (FAILURE == php_thread_message_queue_poll(queue, &tmp TSRMLS_CC)) {
+		RETURN_NULL();
+	} else {
+		*return_value = *tmp;
+		FREE_ZVAL(tmp);
+	}
+}
+/* }}} */
+
+/* {{{ proto mixed thread_message_slot_create()
+   Create a message slot */
+PHP_FUNCTION(thread_message_slot_create)
+{
+	php_thread_message_slot_t *slot = pemalloc(sizeof(*slot), 1);
+	if (!slot) {
+		RETURN_FALSE;
+	}
+	if (FAILURE == php_thread_message_slot_ctor(slot)) {
+		pefree(slot, 1);
+		RETURN_FALSE;
+	}
+	ZEND_REGISTER_RESOURCE(return_value, slot, global_ctx.le_msg_slot);
+}
+/* }}} */
+
+/* {{{ proto mixed thread_message_slot_post(resource slot, mixed message [, bool broadcast])
+   Post a message slot */
+PHP_FUNCTION(thread_message_slot_post)
+{
+	int retval;
+	zval *zv, *msg;
+	php_thread_message_slot_t *slot;
+
+	if (FAILURE == zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rz", &zv, &msg)) {
+		RETURN_FALSE;
+	}
+
+	ZEND_FETCH_RESOURCE(slot, php_thread_message_slot_t*, &zv, -1, "thread message slot",
+			global_ctx.le_msg_slot);
+
+	RETURN_BOOL(SUCCESS == php_thread_message_slot_post(slot, msg TSRMLS_CC));
+}
+/* }}} */
+
+/* {{{ proto mixed thread_message_slot_subscribe(resource slot)
+   Poll on a message slot */
+PHP_FUNCTION(thread_message_slot_subscribe)
+{
+	int retval;
+	zval *zv;
+	php_thread_message_slot_t *slot;
+	zval *tmp;
+
+	if (FAILURE == zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "r", &zv)) {
+		RETURN_FALSE;
+	}
+
+	ZEND_FETCH_RESOURCE(slot, php_thread_message_slot_t*, &zv, -1, "thread message slot",
+			global_ctx.le_msg_slot);
+
+	if (FAILURE == php_thread_message_slot_subscribe(slot, &tmp TSRMLS_CC)) {
+		RETURN_NULL();
+	} else {
+		*return_value = *tmp;
+		FREE_ZVAL(tmp);
+	}
+}
+/* }}} */
+
 static void _php_thread_free_thread_entry(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 {
 	php_thread_entry_dispose((php_thread_entry_t **)&rsrc->ptr TSRMLS_CC);
@@ -989,6 +1567,31 @@ static void _php_thread_free_thread_entry(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 static void _php_thread_free_mutex_entry(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 {
 	php_thread_mutex_dispose((php_thread_mutex_t **)&rsrc->ptr TSRMLS_CC);
+}
+
+static void _php_thread_free_message_queue_entry(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+{
+	php_thread_message_queue_dispose((php_thread_message_queue_t **)&rsrc->ptr TSRMLS_CC);
+}
+
+static void _php_thread_free_message_slot_entry(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+{
+	php_thread_message_slot_dispose((php_thread_message_slot_t **)&rsrc->ptr TSRMLS_CC);
+}
+
+static void _php_thread_signal_handler(int sig, siginfo_t *si, void *ctx)
+{
+	TSRMLS_FETCH();
+	php_thread_entry_t *self = PHP_THREAD_SELF;
+	php_thread_message_t *msg, *prev;
+	bail_if_fail(pth_mutex_acquire(&self->gc_mtx, 0, NULL));
+	for (msg = self->garbage; msg; msg = prev) {
+		prev = msg->prev;
+		zval_ptr_dtor(&msg->value);
+		pefree(msg, 1);
+	}
+	bail_if_fail(pth_mutex_release(&self->gc_mtx));
+	self->garbage = NULL;
 }
 
 /* {{{ PHP_MINIT_FUNCTION
@@ -1006,7 +1609,22 @@ PHP_MINIT_FUNCTION(threading)
 	global_ctx.le_mutex = zend_register_list_destructors_ex(
 			(rsrc_dtor_func_t)_php_thread_free_mutex_entry,
 			NULL, "thread mutex", module_number);
+	global_ctx.le_msg_queue = zend_register_list_destructors_ex(
+			(rsrc_dtor_func_t)_php_thread_free_message_queue_entry,
+			NULL, "thread message queue", module_number);
+	global_ctx.le_msg_slot = zend_register_list_destructors_ex(
+			(rsrc_dtor_func_t)_php_thread_free_message_queue_entry,
+			NULL, "thread message slot", module_number);
 	PHP_THREAD_SELF = &global_ctx.entry;
+	{
+		struct sigaction sa;
+		sa.sa_sigaction = _php_thread_signal_handler;
+		sa.sa_flags = SA_SIGINFO;
+		sigfillset(&sa.sa_mask);
+		if (sigaction(31, &sa, NULL)) {
+			return FAILURE;
+		}
+	}
 	return SUCCESS;
 }
 /* }}} */

@@ -41,9 +41,16 @@ PHP_RSHUTDOWN_FUNCTION(threading);
 PHP_FUNCTION(thread_create);
 PHP_FUNCTION(thread_suspend);
 PHP_FUNCTION(thread_resume);
+PHP_FUNCTION(thread_join);
 PHP_FUNCTION(thread_mutex_create);
 PHP_FUNCTION(thread_mutex_acquire);
 PHP_FUNCTION(thread_mutex_release);
+PHP_FUNCTION(thread_message_queue_create);
+PHP_FUNCTION(thread_message_queue_post);
+PHP_FUNCTION(thread_message_queue_poll);
+PHP_FUNCTION(thread_message_slot_create);
+PHP_FUNCTION(thread_message_slot_post);
+PHP_FUNCTION(thread_message_slot_subscribe);
 
 typedef struct _php_thread_entry_t php_thread_entry_t;
 
