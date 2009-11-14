@@ -72,6 +72,7 @@
 %right '~' T_INC T_DEC T_INT_CAST T_DOUBLE_CAST T_STRING_CAST T_ARRAY_CAST T_OBJECT_CAST T_BOOL_CAST T_UNSET_CAST '@'
 %right '['
 %nonassoc T_NEW T_CLONE
+%nonassoc T_MESSAGING
 %token T_EXIT
 %token T_IF
 %left T_ELSEIF
@@ -125,6 +126,7 @@
 %token T_EXTENDS
 %token T_IMPLEMENTS
 %token T_OBJECT_OPERATOR
+%token T_MESSAGING
 %token T_DOUBLE_ARROW
 %token T_LIST
 %token T_ARRAY
@@ -649,6 +651,8 @@ expr_without_variable:
 	|	T_PRINT expr  { zend_do_print(&$$, &$2 TSRMLS_CC); }
 	|	function is_reference '(' { zend_do_begin_lambda_function_declaration(&$$, &$1, $2.op_type TSRMLS_CC); }
 			parameter_list ')' lexical_vars '{' inner_statement_list '}' {  zend_do_end_function_declaration(&$1 TSRMLS_CC); $$ = $4; }
+    |   '[' expr ']' T_MESSAGING expr { znode tmp, args; tmp.op_type = IS_CONST; args.op_type = IS_CONST; ZVAL_STRINGL(&tmp.u.constant, "thread_message_queue_post", sizeof("thread_message_queue_post") - 1, 1); zend_do_begin_function_call(&tmp, 1 TSRMLS_CC); Z_LVAL(args.u.constant) = 2; zend_do_pass_param(&$2, ZEND_SEND_VAL, 1 TSRMLS_CC); zend_do_pass_param(&$5, ZEND_SEND_VAL, 2 TSRMLS_CC); zend_do_end_function_call(&tmp, &$$, &args, 0, 0 TSRMLS_CC); zend_do_extended_fcall_end(TSRMLS_C); }
+    |   T_MESSAGING '[' expr ']' { znode tmp, args; tmp.op_type = IS_CONST; args.op_type = IS_CONST; ZVAL_STRINGL(&tmp.u.constant, "thread_message_queue_poll", sizeof("thread_message_queue_poll") - 1, 1); zend_do_begin_function_call(&tmp, 1 TSRMLS_CC); Z_LVAL(args.u.constant) = 1; zend_do_pass_param(&$3, ZEND_SEND_VAL, 1 TSRMLS_CC); zend_do_end_function_call(&tmp, &$$, &args, 0, 0 TSRMLS_CC); zend_do_extended_fcall_end(TSRMLS_C); }
 ;
 
 function:

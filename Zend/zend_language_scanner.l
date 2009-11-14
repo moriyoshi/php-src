@@ -997,6 +997,10 @@ NEWLINE ("\r"|"\n"|"\r\n")
 	return T_OBJECT_OPERATOR;
 }
 
+<ST_IN_SCRIPTING>"<-" {
+	return T_MESSAGING;
+}
+
 <ST_IN_SCRIPTING,ST_LOOKING_FOR_PROPERTY>{WHITESPACE}+ {
 	zendlval->value.str.val = yytext; /* no copying - intentional */
 	zendlval->value.str.len = yyleng;
