@@ -59,4 +59,5 @@ if test "$PHP_THREADING" != "no"; then
   dnl PHP_SUBST(THREADING_SHARED_LIBADD)
 
   PHP_NEW_EXTENSION(threading, threading.c, $ext_shared)
+  CPPFLAGS="$CPPFLAGS -DPTH_SYSCALL_SOFT=1"
 fi
