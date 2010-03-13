@@ -110,6 +110,8 @@ typedef int (*zend_object_count_elements_t)(zval *object, long *count TSRMLS_DC)
 
 typedef int (*zend_object_get_closure_t)(zval *obj, zend_class_entry **ce_ptr, union _zend_function **fptr_ptr, zval **zobj_ptr TSRMLS_DC);
 
+typedef int (*zend_object_concat_op_t)(zval *obj, zval *result, zval *rhs TSRMLS_DC);
+
 struct _zend_object_handlers {
 	/* general object functions */
 	zend_object_add_ref_t					add_ref;
@@ -138,6 +140,7 @@ struct _zend_object_handlers {
 	zend_object_count_elements_t			count_elements;
 	zend_object_get_debug_info_t			get_debug_info;
 	zend_object_get_closure_t				get_closure;
+	zend_object_concat_op_t					concat_op;
 };
 
 extern ZEND_API zend_object_handlers std_object_handlers;
@@ -151,6 +154,7 @@ ZEND_API struct _zend_property_info *zend_get_property_info(zend_class_entry *ce
 ZEND_API HashTable *zend_std_get_properties(zval *object TSRMLS_DC);
 ZEND_API HashTable *zend_std_get_debug_info(zval *object, int *is_temp TSRMLS_DC);
 ZEND_API int zend_std_cast_object_tostring(zval *readobj, zval *writeobj, int type TSRMLS_DC);
+ZEND_API int zend_std_concat_op(zval *obj, zval *result, zval *rhs TSRMLS_DC);
 
 
 #define IS_ZEND_STD_OBJECT(z)  (Z_TYPE(z) == IS_OBJECT && (Z_OBJ_HT((z))->get_class_entry != NULL))

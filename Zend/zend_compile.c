@@ -1267,6 +1267,10 @@ void zend_do_begin_function_declaration(znode *function_token, znode *function_n
 			} else if ((name_len == sizeof(ZEND_TOSTRING_FUNC_NAME)-1) && (!memcmp(lcname, ZEND_TOSTRING_FUNC_NAME, sizeof(ZEND_TOSTRING_FUNC_NAME)-1))) {
 				if (fn_flags & ((ZEND_ACC_PPP_MASK | ZEND_ACC_STATIC) ^ ZEND_ACC_PUBLIC)) {
 					zend_error(E_WARNING, "The magic method __toString() must have public visibility and cannot be static");
+                }
+			} else if ((name_len == sizeof(ZEND_CONCAT_FUNC_NAME)-1) && (!memcmp(lcname, ZEND_CONCAT_FUNC_NAME, sizeof(ZEND_CONCAT_FUNC_NAME)-1))) {
+				if (fn_flags & ((ZEND_ACC_PPP_MASK | ZEND_ACC_STATIC) ^ ZEND_ACC_PUBLIC)) {
+					zend_error(E_WARNING, "The magic method " ZEND_CONCAT_FUNC_NAME " must have public visibility and cannot be static");
 				}
 			}
 		} else {
@@ -1335,6 +1339,11 @@ void zend_do_begin_function_declaration(znode *function_token, znode *function_n
 					zend_error(E_WARNING, "The magic method __toString() must have public visibility and cannot be static");
 				}				
 				CG(active_class_entry)->__tostring = (zend_function *) CG(active_op_array);
+			} else if ((name_len == sizeof(ZEND_CONCAT_FUNC_NAME)-1) && (!memcmp(lcname, ZEND_CONCAT_FUNC_NAME, sizeof(ZEND_CONCAT_FUNC_NAME)-1))) {
+				if (fn_flags & ((ZEND_ACC_PPP_MASK | ZEND_ACC_STATIC) ^ ZEND_ACC_PUBLIC)) {
+					zend_error(E_WARNING, "The magic method " ZEND_CONCAT_FUNC_NAME " must have public visibility and cannot be static");
+				}				
+				CG(active_class_entry)->__concat = (zend_function *) CG(active_op_array);
 			} else if (!(fn_flags & ZEND_ACC_STATIC)) {
 				CG(active_op_array)->fn_flags |= ZEND_ACC_ALLOW_STATIC;
 			}

@@ -1799,7 +1799,7 @@ ZEND_API int zend_register_functions(zend_class_entry *scope, const zend_functio
 	int count=0, unload=0;
 	HashTable *target_function_table = function_table;
 	int error_type;
-	zend_function *ctor = NULL, *dtor = NULL, *clone = NULL, *__get = NULL, *__set = NULL, *__unset = NULL, *__isset = NULL, *__call = NULL, *__callstatic = NULL, *__tostring = NULL;
+	zend_function *ctor = NULL, *dtor = NULL, *clone = NULL, *__get = NULL, *__set = NULL, *__unset = NULL, *__isset = NULL, *__call = NULL, *__callstatic = NULL, *__tostring = NULL, *__concat = NULL;
 	char *lowercase_name;
 	int fname_len;
 	char *lc_class_name = NULL;
@@ -1929,6 +1929,8 @@ ZEND_API int zend_register_functions(zend_class_entry *scope, const zend_functio
 				__unset = reg_function;
 			} else if ((fname_len == sizeof(ZEND_ISSET_FUNC_NAME)-1) && !memcmp(lowercase_name, ZEND_ISSET_FUNC_NAME, sizeof(ZEND_ISSET_FUNC_NAME))) {
 				__isset = reg_function;
+			} else if ((fname_len == sizeof(ZEND_CONCAT_FUNC_NAME)-1) && !memcmp(lowercase_name, ZEND_CONCAT_FUNC_NAME, sizeof(ZEND_CONCAT_FUNC_NAME))) {
+				__concat = reg_function;
 			} else {
 				reg_function = NULL;
 			}
@@ -1967,6 +1969,7 @@ ZEND_API int zend_register_functions(zend_class_entry *scope, const zend_functio
 		scope->__set = __set;
 		scope->__unset = __unset;
 		scope->__isset = __isset;
+		scope->__concat = __concat;
 		if (ctor) {
 			ctor->common.fn_flags |= ZEND_ACC_CTOR;
 			if (ctor->common.fn_flags & ZEND_ACC_STATIC) {
@@ -2029,6 +2032,12 @@ ZEND_API int zend_register_functions(zend_class_entry *scope, const zend_functio
 				zend_error(error_type, "Method %s::%s() cannot be static", scope->name, __isset->common.function_name);
 			}
 			__isset->common.fn_flags &= ~ZEND_ACC_ALLOW_STATIC;
+		}
+		if (__concat) {
+			if (__concat->common.fn_flags & ZEND_ACC_STATIC) {
+				zend_error(error_type, "Method %s::%s() cannot be static", scope->name, __concat->common.function_name);
+			}
+			__concat->common.fn_flags &= ~ZEND_ACC_ALLOW_STATIC;
 		}
 		efree(lc_class_name);
 	}

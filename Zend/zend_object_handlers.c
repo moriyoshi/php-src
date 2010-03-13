@@ -1290,6 +1290,31 @@ ZEND_API int zend_std_cast_object_tostring(zval *readobj, zval *writeobj, int ty
 }
 /* }}} */
 
+ZEND_API int zend_std_concat_op(zval *obj, zval *result, zval *rhs TSRMLS_DC) /* {{{ */
+{
+	zval *retval;
+	zend_class_entry *ce = Z_OBJCE_P(obj);
+	if (ce->__concat && (zend_call_method_with_1_params(&obj, ce, &ce->__concat, ZEND_CONCAT_FUNC_NAME, &retval, rhs) || EG(exception))) {
+		if (EG(exception)) {
+			if (retval) {
+				zval_ptr_dtor(&retval);
+			}
+			zend_error(E_ERROR, "Method %s::" ZEND_CONCAT_FUNC_NAME "() must not throw an exception", ce->name);
+			return FAILURE;
+		}
+		if (Z_TYPE_P(retval) == IS_NULL) {
+			zval_ptr_dtor(&retval);
+			return FAILURE;
+		} else {
+			ZVAL_ZVAL(result, retval, 1, 1);
+			return SUCCESS;
+		}
+	}
+	return FAILURE;
+}
+/* }}} */
+
+
 int zend_std_get_closure(zval *obj, zend_class_entry **ce_ptr, zend_function **fptr_ptr, zval **zobj_ptr TSRMLS_DC) /* {{{ */
 {
 	zend_class_entry *ce;
@@ -1344,6 +1369,7 @@ ZEND_API zend_object_handlers std_object_handlers = {
 	NULL,									/* count_elements */
 	NULL,									/* get_debug_info */
 	zend_std_get_closure,					/* get_closure */
+    zend_std_concat_op						/* concat_op */
 };
 
 /*
