@@ -47,6 +47,36 @@ typedef union _temp_variable {
 	zend_class_entry *class_entry;
 } temp_variable;
 
+typedef struct _zend_function_state {
+	zend_function *function;
+	void **arguments;
+} zend_function_state;
+
+struct _zend_execute_data {
+	struct _zend_op *opline;
+	zend_function_state function_state;
+	zend_function *fbc; /* Function Being Called */
+	zend_class_entry *called_scope;
+	zend_op_array *op_array;
+	zval *object;
+	temp_variable *Ts;
+	zval ***CVs;
+	HashTable *symbol_table;
+	struct _zend_execute_data *prev_execute_data;
+	zval *old_error_reporting;
+	zend_bool nested;
+	zval **original_return_value;
+	zend_class_entry *current_scope;
+	zend_class_entry *current_called_scope;
+	zval *current_this;
+	zval *current_object;
+};
+
+typedef struct _zend_execute_data zend_execute_data;
+
+#define ZEND_OPCODE_HANDLER_ARGS zend_execute_data *execute_data TSRMLS_DC
+#define ZEND_OPCODE_HANDLER_ARGS_PASSTHRU execute_data TSRMLS_CC
+
 
 BEGIN_EXTERN_C()
 ZEND_API extern void (*zend_execute)(zend_op_array *op_array TSRMLS_DC);
@@ -159,6 +189,8 @@ ZEND_API int zval_update_constant(zval **pp, void *arg TSRMLS_DC);
 ZEND_API int zval_update_constant_inline_change(zval **pp, void *arg TSRMLS_DC);
 ZEND_API int zval_update_constant_no_inline_change(zval **pp, void *arg TSRMLS_DC);
 ZEND_API int zval_update_constant_ex(zval **pp, void *arg, zend_class_entry *scope TSRMLS_DC);
+
+
 
 /* dedicated Zend executor functions - do not use! */
 #define ZEND_VM_STACK_PAGE_SIZE ((16 * 1024) - 16)

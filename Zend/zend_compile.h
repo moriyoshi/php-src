@@ -93,11 +93,6 @@ typedef struct _znode { /* used only during compilation */
 	zend_uint EA;      /* extended attributes */
 } znode;
 
-typedef struct _zend_execute_data zend_execute_data;
-
-#define ZEND_OPCODE_HANDLER_ARGS zend_execute_data *execute_data TSRMLS_DC
-#define ZEND_OPCODE_HANDLER_ARGS_PASSTHRU execute_data TSRMLS_CC
-
 typedef int (*user_opcode_handler_t) (ZEND_OPCODE_HANDLER_ARGS);
 typedef int (ZEND_FASTCALL *opcode_handler_t) (ZEND_OPCODE_HANDLER_ARGS);
 
@@ -342,12 +337,6 @@ typedef union _zend_function {
 } zend_function;
 
 
-typedef struct _zend_function_state {
-	zend_function *function;
-	void **arguments;
-} zend_function_state;
-
-
 typedef struct _zend_switch_entry {
 	znode cond;
 	int default_case;
@@ -360,28 +349,6 @@ typedef struct _list_llist_element {
 	zend_llist dimensions;
 	znode value;
 } list_llist_element;
-
-union _temp_variable;
-
-struct _zend_execute_data {
-	struct _zend_op *opline;
-	zend_function_state function_state;
-	zend_function *fbc; /* Function Being Called */
-	zend_class_entry *called_scope;
-	zend_op_array *op_array;
-	zval *object;
-	union _temp_variable *Ts;
-	zval ***CVs;
-	HashTable *symbol_table;
-	struct _zend_execute_data *prev_execute_data;
-	zval *old_error_reporting;
-	zend_bool nested;
-	zval **original_return_value;
-	zend_class_entry *current_scope;
-	zend_class_entry *current_called_scope;
-	zval *current_this;
-	zval *current_object;
-};
 
 #define EX(element) execute_data.element
 
