@@ -7416,6 +7416,18 @@ void zend_do_constant_expression(znode *result, zend_ast *ast TSRMLS_DC) /* {{{ 
 }
 /* }}} */
 
+void zend_do_fetch_ast(znode *result, znode *ast TSRMLS_DC) /* {{{ */
+{
+	zend_op *opline = get_next_op(CG(active_op_array) TSRMLS_CC);
+	opline->opcode = ZEND_FETCH_AST;
+	opline->result_type = IS_TMP_VAR;
+    opline->result.var = get_temporary_variable(CG(active_op_array));
+	SET_NODE(opline->op1, ast);
+	SET_UNUSED(opline->op2);
+	GET_NODE(result, opline->result);
+}
+/* }}} */
+
 /* {{{ zend_dirname
    Returns directory name component of path */
 ZEND_API size_t zend_dirname(char *path, size_t len)

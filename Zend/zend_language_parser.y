@@ -855,6 +855,7 @@ expr_without_variable:
 	|	T_STATIC function is_reference { zend_do_begin_lambda_function_declaration(&$$, &$2, $3.op_type, 1 TSRMLS_CC); }
 		'(' parameter_list ')' lexical_vars
 		'{' inner_statement_list '}' { zend_do_end_function_declaration(&$2 TSRMLS_CC); $$ = $4; }
+	|	T_SL '{' ast_expr '}' { zend_do_fetch_ast(&$$, &$3 TSRMLS_CC); }
 ;
 
 yield_expr:
@@ -986,12 +987,12 @@ static_class_constant:
 ;
 
 static_scalar: /* compile-time evaluated scalars */
-		static_scalar_value { zend_do_constant_expression(&$$, $1.u.ast TSRMLS_CC); }
+		ast_expr { zend_do_constant_expression(&$$, $1.u.ast TSRMLS_CC); }
 	|	T_ARRAY '(' static_array_pair_list ')' { $$ = $3; Z_TYPE($$.u.constant) = IS_CONSTANT_ARRAY; }
 	|	'[' static_array_pair_list ']' { $$ = $2; Z_TYPE($$.u.constant) = IS_CONSTANT_ARRAY; }
 ;
 
-static_scalar_value:
+ast_expr:
 		common_scalar	{ $$.u.ast = zend_ast_create_constant(&$1.u.constant); }
 	|	static_class_name_scalar	{ $$.u.ast = zend_ast_create_constant(&$1.u.constant); }
 	|	namespace_name 		{ zend_do_fetch_constant(&$$, NULL, &$1, ZEND_CT, 1 TSRMLS_CC); $$.u.ast = zend_ast_create_constant(&$$.u.constant); }
@@ -1003,38 +1004,38 @@ static_scalar_value:
 ;
 
 static_operation:
-		static_scalar_value '+' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_ADD, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '-' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_SUB, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '*' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_MUL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_POW static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_POW, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '/' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_DIV, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '%' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_MOD, $1.u.ast, $3.u.ast); }
-	|	'!' static_scalar_value { $$.u.ast = zend_ast_create_unary(ZEND_BOOL_NOT, $2.u.ast); }
-	|	'~' static_scalar_value { $$.u.ast = zend_ast_create_unary(ZEND_BW_NOT, $2.u.ast); }
-	|	static_scalar_value '|' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BW_OR, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '&' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BW_AND, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '^' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BW_XOR, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_SL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_SL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_SR static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_SR, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '.' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_CONCAT, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_LOGICAL_XOR static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_XOR, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_LOGICAL_AND static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_AND, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_LOGICAL_OR static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_OR, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_BOOLEAN_AND static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_AND, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_BOOLEAN_OR static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_OR, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_IS_IDENTICAL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_IDENTICAL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_IS_NOT_IDENTICAL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_NOT_IDENTICAL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_IS_EQUAL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_EQUAL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_IS_NOT_EQUAL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_NOT_EQUAL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '<' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value '>' static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER, $3.u.ast, $1.u.ast); }
-	|	static_scalar_value T_IS_SMALLER_OR_EQUAL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER_OR_EQUAL, $1.u.ast, $3.u.ast); }
-	|	static_scalar_value T_IS_GREATER_OR_EQUAL static_scalar_value { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER_OR_EQUAL, $3.u.ast, $1.u.ast); }
-	|	static_scalar_value '?' ':' static_scalar_value { $$.u.ast = zend_ast_create_ternary(ZEND_SELECT, $1.u.ast, NULL, $4.u.ast); }
-	|	static_scalar_value '?' static_scalar_value ':' static_scalar_value { $$.u.ast = zend_ast_create_ternary(ZEND_SELECT, $1.u.ast, $3.u.ast, $5.u.ast); }
-	|	'+' static_scalar_value { $$.u.ast = zend_ast_create_unary(ZEND_UNARY_PLUS, $2.u.ast); }
-	|	'-' static_scalar_value { $$.u.ast = zend_ast_create_unary(ZEND_UNARY_MINUS, $2.u.ast); }
-	|	'(' static_scalar_value ')' { $$ = $2; }
+		ast_expr '+' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_ADD, $1.u.ast, $3.u.ast); }
+	|	ast_expr '-' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_SUB, $1.u.ast, $3.u.ast); }
+	|	ast_expr '*' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_MUL, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_POW ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_POW, $1.u.ast, $3.u.ast); }
+	|	ast_expr '/' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_DIV, $1.u.ast, $3.u.ast); }
+	|	ast_expr '%' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_MOD, $1.u.ast, $3.u.ast); }
+	|	'!' ast_expr { $$.u.ast = zend_ast_create_unary(ZEND_BOOL_NOT, $2.u.ast); }
+	|	'~' ast_expr { $$.u.ast = zend_ast_create_unary(ZEND_BW_NOT, $2.u.ast); }
+	|	ast_expr '|' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BW_OR, $1.u.ast, $3.u.ast); }
+	|	ast_expr '&' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BW_AND, $1.u.ast, $3.u.ast); }
+	|	ast_expr '^' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BW_XOR, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_SL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_SL, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_SR ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_SR, $1.u.ast, $3.u.ast); }
+	|	ast_expr '.' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_CONCAT, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_LOGICAL_XOR ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_XOR, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_LOGICAL_AND ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_AND, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_LOGICAL_OR ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_OR, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_BOOLEAN_AND ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_AND, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_BOOLEAN_OR ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_BOOL_OR, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_IS_IDENTICAL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_IDENTICAL, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_IS_NOT_IDENTICAL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_NOT_IDENTICAL, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_IS_EQUAL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_EQUAL, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_IS_NOT_EQUAL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_NOT_EQUAL, $1.u.ast, $3.u.ast); }
+	|	ast_expr '<' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER, $1.u.ast, $3.u.ast); }
+	|	ast_expr '>' ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER, $3.u.ast, $1.u.ast); }
+	|	ast_expr T_IS_SMALLER_OR_EQUAL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER_OR_EQUAL, $1.u.ast, $3.u.ast); }
+	|	ast_expr T_IS_GREATER_OR_EQUAL ast_expr { $$.u.ast = zend_ast_create_binary(ZEND_IS_SMALLER_OR_EQUAL, $3.u.ast, $1.u.ast); }
+	|	ast_expr '?' ':' ast_expr { $$.u.ast = zend_ast_create_ternary(ZEND_SELECT, $1.u.ast, NULL, $4.u.ast); }
+	|	ast_expr '?' ast_expr ':' ast_expr { $$.u.ast = zend_ast_create_ternary(ZEND_SELECT, $1.u.ast, $3.u.ast, $5.u.ast); }
+	|	'+' ast_expr { $$.u.ast = zend_ast_create_unary(ZEND_UNARY_PLUS, $2.u.ast); }
+	|	'-' ast_expr { $$.u.ast = zend_ast_create_unary(ZEND_UNARY_MINUS, $2.u.ast); }
+	|	'(' ast_expr ')' { $$ = $2; }
 ;
 
 

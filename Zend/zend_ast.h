@@ -58,4 +58,8 @@ ZEND_API void zend_ast_evaluate(zval *result, zend_ast *ast, zend_class_entry *s
 ZEND_API zend_ast *zend_ast_copy(zend_ast *ast);
 ZEND_API void zend_ast_destroy(zend_ast *ast);
 
+extern ZEND_API zend_class_entry *zend_ast_wrapper_ce;
+void zend_register_zend_ast_wrapper_ce(TSRMLS_D);
+zend_object_value zend_ast_wrapper_create_object(zend_class_entry *ce, zend_ast *ast, zend_ast *root, zend_object_handle root_handle TSRMLS_DC);
+
 #endif

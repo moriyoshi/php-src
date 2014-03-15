@@ -5674,4 +5674,21 @@ ZEND_VM_HANDLER(167, ZEND_ASSIGN_POW, VAR|UNUSED|CV, CONST|TMP|VAR|UNUSED|CV)
 	ZEND_VM_DISPATCH_TO_HELPER_EX(zend_binary_assign_op_helper, binary_op,pow_function);
 }
 
+ZEND_VM_HANDLER(168, ZEND_FETCH_AST, CONST, UNUSED)
+{
+	USE_OPLINE
+	zval *ast;
+	zval *result = &EX_T(opline->result.var).tmp_var;
+	zend_free_op free_op1;
+	SAVE_OPLINE();
+	ast = GET_OP1_ZVAL_PTR(BP_VAR_R);
+	Z_TYPE_P(result) = IS_OBJECT;
+	Z_OBJVAL_P(result) = zend_ast_wrapper_create_object(zend_ast_wrapper_ce, Z_AST_P(ast), NULL, 0);
+	Z_TYPE_P(ast) = IS_NULL;
+	Z_AST_P(ast) = NULL;
+	FREE_OP1();
+	CHECK_EXCEPTION();
+	ZEND_VM_NEXT_OPCODE();
+}
+
 ZEND_VM_EXPORT_HELPER(zend_do_fcall, zend_do_fcall_common_helper)
