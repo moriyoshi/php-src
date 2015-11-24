@@ -233,7 +233,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %type <ast> unprefixed_use_declarations const_decl inner_statement
 %type <ast> expr optional_expr while_statement for_statement foreach_variable
 %type <ast> foreach_statement declare_statement finally_statement unset_variable variable
-%type <ast> extends_from parameter optional_type argument expr_without_variable global_var
+%type <ast> extends_from parameter optional_type argument expr_without_variable expr_assignment global_var
 %type <ast> static_var class_statement trait_adaptation trait_precedence trait_alias
 %type <ast> absolute_trait_method_reference trait_method_reference property echo_expr
 %type <ast> new_expr anonymous_class class_name class_name_reference simple_variable
@@ -241,7 +241,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %type <ast> exit_expr scalar backticks_expr lexical_var function_call member_name property_name
 %type <ast> variable_class_name dereferencable_scalar constant dereferencable
 %type <ast> callable_expr callable_variable static_member new_variable
-%type <ast> assignment_list_element array_pair encaps_var encaps_var_offset isset_variables
+%type <ast> array_pair omittable_array_pair encaps_var encaps_var_offset isset_variables
 %type <ast> top_statement_list use_declarations const_list inner_statement_list if_stmt
 %type <ast> alt_if_stmt for_exprs switch_case_list global_var_list static_var_list
 %type <ast> echo_expr_list unset_variables catch_list parameter_list class_statement_list
@@ -249,8 +249,8 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %type <ast> non_empty_parameter_list argument_list non_empty_argument_list property_list
 %type <ast> class_const_list class_const_decl name_list trait_adaptations method_body non_empty_for_exprs
 %type <ast> ctor_arguments alt_if_stmt_without_else trait_adaptation_list lexical_vars
-%type <ast> lexical_var_list encaps_list array_pair_list non_empty_array_pair_list
-%type <ast> assignment_list isset_variable type return_type
+%type <ast> lexical_var_list encaps_list array array_pair_list non_empty_array_pair_list omittable_array_pair_list non_empty_omittable_array_pair_list
+%type <ast> isset_variable type return_type
 %type <ast> identifier
 
 %type <num> returns_ref function is_reference is_variadic variable_modifiers
@@ -538,7 +538,7 @@ implements_list:
 foreach_variable:
 		variable			{ $$ = $1; }
 	|	'&' variable		{ $$ = zend_ast_create(ZEND_AST_REF, $2); }
-	|	T_LIST '(' assignment_list ')' { $$ = $3; }
+	|	array				{ $$ = $1; }
 ;
 
 for_statement:
@@ -852,14 +852,17 @@ new_expr:
 			{ $$ = $2; }
 ;
 
-expr_without_variable:
-		T_LIST '(' assignment_list ')' '=' expr
-			{ $$ = zend_ast_create(ZEND_AST_ASSIGN, $3, $6); }
+expr_assignment:
+	array '=' expr
+			{ $$ = zend_ast_create(ZEND_AST_ASSIGN, $1, $3); }
 	|	variable '=' expr
 			{ $$ = zend_ast_create(ZEND_AST_ASSIGN, $1, $3); }
 	|	variable '=' '&' variable
 			{ $$ = zend_ast_create(ZEND_AST_ASSIGN_REF, $1, $4); }
-	|	T_CLONE expr { $$ = zend_ast_create(ZEND_AST_CLONE, $2); }
+;
+
+expr_without_variable:
+	T_CLONE expr { $$ = zend_ast_create(ZEND_AST_CLONE, $2); }
 	|	variable T_PLUS_EQUAL expr
 			{ $$ = zend_ast_create_assign_op(ZEND_ASSIGN_ADD, $1, $3); }
 	|	variable T_MINUS_EQUAL expr
@@ -969,6 +972,7 @@ expr_without_variable:
 			{ $$ = zend_ast_create_decl(ZEND_AST_CLOSURE, $3 | ZEND_ACC_STATIC, $2, $9,
 			      zend_string_init("{closure}", sizeof("{closure}") - 1, 0),
 			      $5, $7, $11, $8); }
+	|	expr_assignment
 ;
 
 function:
@@ -1041,9 +1045,14 @@ ctor_arguments:
 ;
 
 
-dereferencable_scalar:
+array:
 		T_ARRAY '(' array_pair_list ')'	{ $$ = $3; }
+	|	T_LIST '(' omittable_array_pair_list ')' { $$ = $3; }
 	|	'[' array_pair_list ']'			{ $$ = $2; }
+;
+
+dereferencable_scalar:
+	array								{ $$ = $1; }
 	|	T_CONSTANT_ENCAPSED_STRING		{ $$ = $1; }
 ;
 
@@ -1169,20 +1178,6 @@ property_name:
 	|	simple_variable	{ $$ = zend_ast_create(ZEND_AST_VAR, $1); }
 ;
 
-assignment_list:
-		assignment_list ',' assignment_list_element
-			{ $$ = zend_ast_list_add($1, $3); }
-	|	assignment_list_element
-			{ $$ = zend_ast_create_list(1, ZEND_AST_LIST, $1); }
-;
-
-assignment_list_element:
-		variable						{ $$ = $1; }
-	|	T_LIST '(' assignment_list ')'	{ $$ = $3; }
-	|	/* empty */						{ $$ = NULL; }
-;
-
-
 array_pair_list:
 		/* empty */ { $$ = zend_ast_create_list(0, ZEND_AST_ARRAY); }
 	|	non_empty_array_pair_list possible_comma { $$ = $1; }
@@ -1190,6 +1185,23 @@ array_pair_list:
 
 non_empty_array_pair_list:
 		non_empty_array_pair_list ',' array_pair
+			{ $$ = zend_ast_list_add($1, $3); }
+	|	array_pair
+			{ $$ = zend_ast_create_list(1, ZEND_AST_ARRAY, $1); }
+;
+
+omittable_array_pair_list:
+	/* empty */
+		{ $$ = zend_ast_create_list(0, ZEND_AST_ARRAY); }
+	|	non_empty_omittable_array_pair_list
+		{ $$ = $1; }
+	|	',' omittable_array_pair
+		{ $$ = zend_ast_create_list(2, ZEND_AST_ARRAY,
+		                            zend_ast_create(ZEND_AST_ARRAY_ELEM, NULL, NULL), $2); }
+;
+
+non_empty_omittable_array_pair_list:
+		non_empty_omittable_array_pair_list ',' omittable_array_pair
 			{ $$ = zend_ast_list_add($1, $3); }
 	|	array_pair
 			{ $$ = zend_ast_create_list(1, ZEND_AST_ARRAY, $1); }
@@ -1203,6 +1215,13 @@ array_pair:
 			{ $$ = zend_ast_create_ex(ZEND_AST_ARRAY_ELEM, 1, $4, $1); }
 	|	'&' variable
 			{ $$ = zend_ast_create_ex(ZEND_AST_ARRAY_ELEM, 1, $2, NULL); }
+;
+
+omittable_array_pair:
+		array_pair
+			{ $$ = $1; }
+	|	/* empty */
+			{ $$ = zend_ast_create(ZEND_AST_ARRAY_ELEM, NULL, NULL); }
 ;
 
 encaps_list:
