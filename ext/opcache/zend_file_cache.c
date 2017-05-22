@@ -143,9 +143,6 @@ static int zend_file_cache_flock(int fd, int type)
 		} \
 	} while (0)
 
-static const uint32_t uninitialized_bucket[-HT_MIN_MASK] =
-	{HT_INVALID_IDX, HT_INVALID_IDX};
-
 typedef struct _zend_file_cache_metainfo {
 	char         magic[8];
 	char         system_id[32];
@@ -862,7 +859,8 @@ static void zend_file_cache_unserialize_hash(HashTable               *ht,
 
 	ht->pDestructor = dtor;
 	if (!(ht->u.flags & HASH_FLAG_INITIALIZED)) {
-		HT_SET_DATA_ADDR(ht, &uninitialized_bucket);
+		HT_SET_HASH_ADDR(ht, uninitialized_bucket);
+		ht->arData = NULL;
 		return;
 	}
 	if (IS_UNSERIALIZED(ht->arData)) {

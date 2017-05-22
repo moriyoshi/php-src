@@ -78,32 +78,32 @@ typedef void (*zend_persist_func_t)(zval*);
 
 static void zend_persist_zval(zval *z);
 
-static const uint32_t uninitialized_bucket[-HT_MIN_MASK] =
-	{HT_INVALID_IDX, HT_INVALID_IDX};
-
 static void zend_hash_persist(HashTable *ht, zend_persist_func_t pPersistElement)
 {
 	uint32_t idx, nIndex;
 	Bucket *p;
 
 	if (!(ht->u.flags & HASH_FLAG_INITIALIZED)) {
-		HT_SET_DATA_ADDR(ht, &uninitialized_bucket);
+		HT_SET_HASH_ADDR(ht, uninitialized_bucket);
 		return;
 	}
 	if (ht->nNumUsed == 0) {
-		efree(HT_GET_DATA_ADDR(ht));
+		if (HT_GET_HASH_ADDR(ht) != uninitialized_bucket) {
+			efree(HT_GET_HASH_ADDR(ht));
+		}
+		efree(ht->arData);
 		ht->nTableMask = HT_MIN_MASK;
-		HT_SET_DATA_ADDR(ht, &uninitialized_bucket);
+		HT_SET_HASH_ADDR(ht, uninitialized_bucket);
 		ht->u.flags &= ~HASH_FLAG_INITIALIZED;
 		return;
 	}
 	if (ht->u.flags & HASH_FLAG_PACKED) {
-		void *data = HT_GET_DATA_ADDR(ht);
-		zend_accel_store(data, HT_USED_SIZE(ht));
-		HT_SET_DATA_ADDR(ht, data);
+		Bucket *data = ht->arData;
+		zend_accel_store(data, HT_USED_DATA_SIZE(ht));
+		ht->arData = data;
 	} else if (ht->nNumUsed < (uint32_t)(-(int32_t)ht->nTableMask) / 2) {
 		/* compact table */
-		void *old_data = HT_GET_DATA_ADDR(ht);
+		uint32_t *old_data = HT_GET_HASH_ADDR(ht);
 		Bucket *old_buckets = ht->arData;
 		uint32_t hash_size;
 
@@ -117,11 +117,14 @@ static void zend_hash_persist(HashTable *ht, zend_persist_func_t pPersistElement
 		}
 		ht->nTableMask = (uint32_t)(-(int32_t)hash_size);
 		ZEND_ASSERT(((zend_uintptr_t)ZCG(mem) & 0x7) == 0); /* should be 8 byte aligned */
-		HT_SET_DATA_ADDR(ht, ZCG(mem));
+		HT_SET_HASH_ADDR(ht, ZCG(mem));
+		ht->arData = ZCG(mem);
 		ZCG(mem) = (void*)((char*)ZCG(mem) + ZEND_ALIGNED_SIZE((hash_size * sizeof(uint32_t)) + (ht->nNumUsed * sizeof(Bucket))));
 		HT_HASH_RESET(ht);
-		memcpy(ht->arData, old_buckets, ht->nNumUsed * sizeof(Bucket));
+		memcpy(HT_GET_HASH_ADDR(ht), old_data, HT_HASH_SIZE(ht->nTableMask));
+		memcpy(ht->arData, old_buckets, HT_USED_DATA_SIZE(ht));
 		efree(old_data);
+		efree(old_buckets);
 
 		for (idx = 0; idx < ht->nNumUsed; idx++) {
 			p = ht->arData + idx;
@@ -141,14 +144,17 @@ static void zend_hash_persist(HashTable *ht, zend_persist_func_t pPersistElement
 		}
 		return;
 	} else {
-		void *data = ZCG(mem);
-		void *old_data = HT_GET_DATA_ADDR(ht);
+		void *old_data = HT_GET_HASH_ADDR(ht);
+		Bucket *old_buckets = ht->arData;
 
 		ZEND_ASSERT(((zend_uintptr_t)ZCG(mem) & 0x7) == 0); /* should be 8 byte aligned */
-		ZCG(mem) = (void*)((char*)data + ZEND_ALIGNED_SIZE(HT_USED_SIZE(ht)));
-		memcpy(data, old_data, HT_USED_SIZE(ht));
+		ZCG(mem) = (void*)((char*)ZCG(mem) + ZEND_ALIGNED_SIZE(HT_HASH_SIZE(ht->nTableMask) + HT_USED_DATA_SIZE(ht)));
+		HT_SET_HASH_ADDR(ht, ZCG(mem));
+		ht->arData = ZCG(mem);
+		memcpy(HT_GET_HASH_ADDR(ht), old_data, HT_HASH_SIZE(ht->nTableMask));
+		memcpy(ht->arData, old_buckets, HT_USED_DATA_SIZE(ht));
 		efree(old_data);
-		HT_SET_DATA_ADDR(ht, data);
+		efree(old_buckets);
 	}
 
 	for (idx = 0; idx < ht->nNumUsed; idx++) {
@@ -171,21 +177,24 @@ static void zend_hash_persist_immutable(HashTable *ht)
 	Bucket *p;
 
 	if (!(ht->u.flags & HASH_FLAG_INITIALIZED)) {
-		HT_SET_DATA_ADDR(ht, &uninitialized_bucket);
+		HT_SET_HASH_ADDR(ht, uninitialized_bucket);
 		return;
 	}
 	if (ht->nNumUsed == 0) {
-		efree(HT_GET_DATA_ADDR(ht));
+		if (HT_GET_HASH_ADDR(ht) != uninitialized_bucket) {
+			efree(HT_GET_HASH_ADDR(ht));
+		}
+		efree(ht->arData);
 		ht->nTableMask = HT_MIN_MASK;
-		HT_SET_DATA_ADDR(ht, &uninitialized_bucket);
+		HT_SET_HASH_ADDR(ht, uninitialized_bucket);
 		ht->u.flags &= ~HASH_FLAG_INITIALIZED;
 		return;
 	}
 	if (ht->u.flags & HASH_FLAG_PACKED) {
-		HT_SET_DATA_ADDR(ht, zend_accel_memdup(HT_GET_DATA_ADDR(ht), HT_USED_SIZE(ht)));
+		ht->arData = zend_accel_memdup(ht->arData, HT_USED_DATA_SIZE(ht));
 	} else if (ht->nNumUsed < (uint32_t)(-(int32_t)ht->nTableMask) / 2) {
 		/* compact table */
-		void *old_data = HT_GET_DATA_ADDR(ht);
+		uint32_t *old_data = HT_GET_HASH_ADDR(ht);
 		Bucket *old_buckets = ht->arData;
 		uint32_t hash_size;
 
@@ -199,11 +208,14 @@ static void zend_hash_persist_immutable(HashTable *ht)
 		}
 		ht->nTableMask = (uint32_t)(-(int32_t)hash_size);
 		ZEND_ASSERT(((zend_uintptr_t)ZCG(mem) & 0x7) == 0); /* should be 8 byte aligned */
-		HT_SET_DATA_ADDR(ht, ZCG(mem));
+		HT_SET_HASH_ADDR(ht, ZCG(mem));
+		ht->arData = ZCG(mem);
 		ZCG(mem) = (void*)((char*)ZCG(mem) + (hash_size * sizeof(uint32_t)) + (ht->nNumUsed * sizeof(Bucket)));
 		HT_HASH_RESET(ht);
-		memcpy(ht->arData, old_buckets, ht->nNumUsed * sizeof(Bucket));
+		memcpy(HT_GET_HASH_ADDR(ht), old_data, HT_HASH_SIZE(ht->nTableMask));
+		memcpy(ht->arData, old_buckets, HT_USED_DATA_SIZE(ht));
 		efree(old_data);
+		efree(old_buckets);
 
 		for (idx = 0; idx < ht->nNumUsed; idx++) {
 			p = ht->arData + idx;
@@ -223,12 +235,17 @@ static void zend_hash_persist_immutable(HashTable *ht)
 		}
 		return;
 	} else {
-		void *data = ZCG(mem);
+		void *old_data = HT_GET_HASH_ADDR(ht);
+		Bucket *old_buckets = ht->arData;
 
 		ZEND_ASSERT(((zend_uintptr_t)ZCG(mem) & 0x7) == 0); /* should be 8 byte aligned */
-		ZCG(mem) = (void*)((char*)data + ZEND_ALIGNED_SIZE(HT_USED_SIZE(ht)));
-		memcpy(data, HT_GET_DATA_ADDR(ht), HT_USED_SIZE(ht));
-		HT_SET_DATA_ADDR(ht, data);
+		ZCG(mem) = (void*)((char*)ZCG(mem) + ZEND_ALIGNED_SIZE(HT_HASH_SIZE(ht->nTableMask) + HT_USED_DATA_SIZE(ht)));
+		HT_SET_HASH_ADDR(ht, ZCG(mem));
+		ht->arData = ZCG(mem);
+		memcpy(HT_GET_HASH_ADDR(ht), old_data, HT_HASH_SIZE(ht->nTableMask));
+		memcpy(ht->arData, old_buckets, HT_USED_DATA_SIZE(ht));
+		efree(old_data);
+		efree(old_buckets);
 	}
 	for (idx = 0; idx < ht->nNumUsed; idx++) {
 		p = ht->arData + idx;
