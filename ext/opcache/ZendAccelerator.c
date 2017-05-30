@@ -2552,14 +2552,15 @@ static int zend_accel_init_shm(void)
 		void *data;
 
 		ZCSG(interned_strings).nTableMask = -ZCSG(interned_strings).nTableSize;
-		data = zend_shared_alloc(HT_SIZE(&ZCSG(interned_strings)));
+		data = zend_shared_alloc(HT_HASH_SIZE(ZCSG(interned_strings).nTableMask) + HT_DATA_SIZE(ZCSG(interned_strings).nTableSize));
 		ZCSG(interned_strings_start) = zend_shared_alloc((ZCG(accel_directives).interned_strings_buffer * 1024 * 1024));
 		if (!data || !ZCSG(interned_strings_start)) {
 			zend_accel_error(ACCEL_LOG_FATAL, ACCELERATOR_PRODUCT_NAME " cannot allocate buffer for interned strings");
 			zend_shared_alloc_unlock();
 			return FAILURE;
 		}
-		HT_SET_DATA_ADDR(&ZCSG(interned_strings), data);
+		HT_SET_HASH_ADDR(&ZCSG(interned_strings), data);
+		ZCSG(interned_strings).arData = data;
 		HT_HASH_RESET(&ZCSG(interned_strings));
 		ZCSG(interned_strings_end)   = ZCSG(interned_strings_start) + (ZCG(accel_directives).interned_strings_buffer * 1024 * 1024);
 		ZCSG(interned_strings_top)   = ZCSG(interned_strings_start);

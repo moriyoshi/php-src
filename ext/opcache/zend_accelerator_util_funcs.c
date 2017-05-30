@@ -190,7 +190,8 @@ static void zend_hash_clone_constants(HashTable *ht, HashTable *source)
 	}
 
 	ZEND_ASSERT((source->u.flags & HASH_FLAG_PACKED) == 0);
-	HT_SET_DATA_ADDR(ht, emalloc(HT_SIZE(ht)));
+	HT_SET_HASH_ADDR(ht, emalloc(HT_HASH_SIZE(ht->nTableMask)));
+	ht->arData = emalloc(HT_DATA_SIZE(ht->nTableSize));
 	HT_HASH_RESET(ht);
 
 	p = source->arData;
@@ -241,7 +242,8 @@ static void zend_hash_clone_methods(HashTable *ht, HashTable *source, zend_class
 	}
 
 	ZEND_ASSERT(!(source->u.flags & HASH_FLAG_PACKED));
-	HT_SET_DATA_ADDR(ht, emalloc(HT_SIZE(ht)));
+	HT_SET_HASH_ADDR(ht, emalloc(HT_HASH_SIZE(ht->nTableMask)));
+	ht->arData = emalloc(HT_DATA_SIZE(ht->nTableSize));
 	HT_HASH_RESET(ht);
 
 	p = source->arData;
@@ -299,7 +301,8 @@ static void zend_hash_clone_prop_info(HashTable *ht, HashTable *source, zend_cla
 	}
 
 	ZEND_ASSERT(!(source->u.flags & HASH_FLAG_PACKED));
-	HT_SET_DATA_ADDR(ht, emalloc(HT_SIZE(ht)));
+	HT_SET_HASH_ADDR(ht, emalloc(HT_HASH_SIZE(ht->nTableMask)));
+	ht->arData = emalloc(HT_DATA_SIZE(ht->nTableSize));
 	HT_HASH_RESET(ht);
 
 	p = source->arData;

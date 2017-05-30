@@ -597,7 +597,7 @@ void phpdbg_watch_parent_ht(phpdbg_watch_element *element) {
 			zend_hash_init(&hti->watches, 0, grrrrr, ZVAL_PTR_DTOR, 0);
 			phpdbg_btree_insert(&PHPDBG_G(watch_HashTables), (zend_ulong) hti->ht, hti);
 
-			phpdbg_set_addr_watchpoint(HT_GET_DATA_ADDR(hti->ht), HT_HASH_SIZE(hti->ht->nTableMask), &hti->hash_watch);
+			phpdbg_set_addr_watchpoint(hti->ht->arData, HT_DATA_SIZE(hti->ht->nTableSize), &hti->hash_watch);
 			hti->hash_watch.type = WATCH_ON_HASHDATA;
 			phpdbg_store_watchpoint_btree(&hti->hash_watch);
 			phpdbg_activate_watchpoint(&hti->hash_watch);
